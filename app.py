@@ -18,13 +18,11 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("📊 Attendance & Productivity Dashboard")
-
-# -------------------- LOAD DATA --------------------
-df = load_attendance_data()
-
 # -------------------- SIDEBAR --------------------
-menu = st.sidebar.selectbox(
+st.sidebar.title("🏢 Admin Dashboard")
+st.sidebar.caption("Attendance & Productivity Monitoring")
+
+menu = st.sidebar.radio(
     "Navigation",
     [
         "Dashboard Overview",
@@ -34,20 +32,36 @@ menu = st.sidebar.selectbox(
     ]
 )
 
-# -------------------- DASHBOARD OVERVIEW --------------------
+st.sidebar.markdown("---")
+st.sidebar.info(
+    "This dashboard helps track attendance, working hours, "
+    "employee availability, and task allocation."
+)
+
+# -------------------- LOAD DATA --------------------
+df = load_attendance_data()
+
+st.title("📊 Attendance & Productivity Dashboard")
+
+# ====================================================
+# DASHBOARD OVERVIEW
+# ====================================================
 if menu == "Dashboard Overview":
-    st.subheader("📌 Key Performance Indicators")
+    st.subheader("📌 Dashboard Overview")
 
-    kpis = calculate_kpis(df)
+    latest_date = df["date"].max()
+    today_df = df[df["date"] == latest_date]
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("👥 Total Employees", kpis["total_employees"])
-    col2.metric("⏱ Avg Working Hours", kpis["average_working_hours"])
-    col3.metric("⚠ Underutilized Employees", kpis["underutilized_employees"])
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric("👥 Total Employees", df["employee_name"].nunique())
+    col2.metric("📅 Latest Date", latest_date.strftime("%d %b %Y"))
+    col3.metric("✅ Present Employees", today_df.shape[0])
+    col4.metric("⏱ Avg Hours (Latest Day)", round(today_df["working_hours"].mean(), 2))
 
     st.markdown("---")
 
-    st.subheader("📈 Working Hours by Employee")
+    st.subheader("⏱ Total Working Hours by Employee")
 
     hours_summary = get_working_hours_summary(df)
 
@@ -55,27 +69,40 @@ if menu == "Dashboard Overview":
         hours_summary,
         x="employee_name",
         y="total_hours",
-        labels={"employee_name": "Employee", "total_hours": "Total Hours"},
+        text_auto=True,
+        labels={
+            "employee_name": "Employee",
+            "total_hours": "Total Working Hours"
+        }
     )
 
     st.plotly_chart(fig, use_container_width=True)
 
-# -------------------- DAILY ATTENDANCE --------------------
+# ====================================================
+# DAILY ATTENDANCE
+# ====================================================
 elif menu == "Daily Attendance":
     st.subheader("📅 Daily Attendance")
 
     selected_date = st.date_input(
         "Select Date",
-        df["date"].min()
+        df["date"].min(),
+        help="Select a date to view attendance details"
     )
 
     daily_df = get_daily_attendance(df, pd.to_datetime(selected_date))
 
+    st.markdown(
+        f"### Attendance Details for {selected_date.strftime('%d %b %Y')}"
+    )
+
     st.dataframe(daily_df, use_container_width=True)
 
-# -------------------- MONTHLY REPORT --------------------
+# ====================================================
+# MONTHLY REPORT
+# ====================================================
 elif menu == "Monthly Report":
-    st.subheader("📊 Monthly Attendance & Working Hours")
+    st.subheader("📊 Monthly Attendance & Productivity Report")
 
     monthly_df = get_monthly_report(df)
 
@@ -85,46 +112,65 @@ elif menu == "Monthly Report":
 
     st.subheader("📉 Monthly Working Hours Trend")
 
+    # Convert Period to string for Plotly compatibility
+    monthly_df_plot = monthly_df.copy()
+    monthly_df_plot["month"] = monthly_df_plot["month"].astype(str)
+
     trend_fig = px.line(
-        monthly_df,
+        monthly_df_plot,
         x="month",
         y="total_hours",
         color="employee_name",
-        markers=True
+        markers=True,
+        labels={
+            "month": "Month",
+            "total_hours": "Total Working Hours"
+        }
     )
 
     st.plotly_chart(trend_fig, use_container_width=True)
 
-# -------------------- TASK ALLOCATION --------------------
+# ====================================================
+# TASK ALLOCATION
+# ====================================================
 elif menu == "Task Allocation":
-    st.subheader("🛠 Employees Available for Task Allocation")
+    st.subheader("🛠 Task Allocation Center")
+    st.caption("Allocate tasks based on employee availability")
 
     free_employees = get_free_time_employees(df)
 
     if free_employees.empty:
-        st.info("✅ No employees are currently underutilized.")
+        st.success("🎉 All employees are fully utilized.")
     else:
+        st.markdown("### 👇 Employees with Available Time")
         st.dataframe(free_employees, use_container_width=True)
 
         st.markdown("---")
-        st.subheader("➕ Allocate New Task")
+        st.markdown("### ➕ Allocate a New Task")
 
-        employee = st.selectbox(
-            "Select Employee",
-            free_employees["employee_name"].unique()
-        )
+        with st.form("task_allocation_form"):
+            employee = st.selectbox(
+                "Select Employee",
+                free_employees["employee_name"].unique()
+            )
 
-        task_name = st.text_input("Task Name")
-        allocated_hours = st.number_input(
-            "Allocated Hours",
-            min_value=1,
-            max_value=4,
-            step=1
-        )
+            task_name = st.text_input(
+                "Task Description",
+                placeholder="e.g. Prepare monthly report"
+            )
 
-        if st.button("Allocate Task"):
+            allocated_hours = st.slider(
+                "Allocated Hours",
+                min_value=1,
+                max_value=4,
+                value=2
+            )
+
+            submit = st.form_submit_button("Allocate Task")
+
+        if submit:
             if task_name.strip() == "":
-                st.warning("⚠ Please enter a task name.")
+                st.warning("⚠ Please enter a valid task description.")
             else:
                 allocate_task(employee, task_name, allocated_hours)
                 st.success("✅ Task allocated successfully!")
