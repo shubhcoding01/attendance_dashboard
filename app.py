@@ -2,10 +2,13 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import time 
+import calendar # <--- NEW IMPORT
+from datetime import datetime
 
 # Import database and logic functions
 from databases.db import create_tables
 from utils import (
+    calculate_payroll,
     load_attendance_data,
     get_daily_attendance,
     get_working_hours_summary,
@@ -239,6 +242,25 @@ elif st.session_state['role'] == 'Admin':
                 mdf['total_hours'] = mdf['total_hours'].apply(format_hours)
                 mdf['average_hours'] = mdf['average_hours'].apply(format_hours)
                 st.dataframe(mdf, use_container_width=True)
+
+    # VIEW 4: PAYROLL (NEW)
+    elif menu == "Payroll & Salary":
+        c1, c2, c3 = st.columns(3)
+        sel_year = c1.number_input("Year", min_value=2024, max_value=2030, value=datetime.now().year)
+        sel_month = c2.selectbox("Month", range(1, 13), index=datetime.now().month - 1)
+        
+        if c3.button("💰 Calculate Salary", type="primary"):
+            payroll_df = calculate_payroll(sel_year, sel_month)
+            if not payroll_df.empty:
+                st.success(f"Payroll for {sel_month}/{sel_year}")
+                
+                # Formatting Currency
+                payroll_df['base_salary'] = payroll_df['base_salary'].apply(lambda x: f"₹{x:,.2f}")
+                payroll_df['final_pay'] = payroll_df['final_pay'].apply(lambda x: f"₹{x:,.2f}")
+                
+                st.dataframe(payroll_df, use_container_width=True)
+            else:
+                st.warning("No employee data found for calculation.")
 
     # --- VIEW 4: TASK ALLOCATION ---
     elif menu == "Task Allocation":

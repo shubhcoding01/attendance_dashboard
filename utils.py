@@ -2,6 +2,7 @@ import pandas as pd
 import hashlib
 from datetime import datetime
 from databases.db import get_connection
+import calendar # <--- NEW IMPORT
 
 FULL_DAY_HOURS = 8
 
@@ -353,3 +354,63 @@ def format_hours(hours_float):
         return f"{hours}h"         # e.g., "8h"
         
     return f"{hours}h {minutes}m"  # e.g., "8h 1m"
+
+
+# ---------------------------------------------------
+# 7. PAYROLL SYSTEM (NEW)
+# ---------------------------------------------------
+def calculate_payroll(year, month):
+    """
+    Calculates salary based on:
+    1. Base Salary (from users table)
+    2. Total Working Days (Month days - Sundays)
+    3. Days Present
+    """
+    conn = get_connection()
+    
+    # 1. Get Users & Base Salary
+    users = pd.read_sql("SELECT name, salary FROM users WHERE role='Employee'", conn)
+    
+    if users.empty:
+        conn.close()
+        return pd.DataFrame()
+
+    # 2. Calculate Working Days in Month
+    _, num_days = calendar.monthrange(year, month)
+    sundays = 0
+    for day in range(1, num_days + 1):
+        # weekday() returns 6 for Sunday
+        if datetime(year, month, day).weekday() == 6:
+            sundays += 1
+    
+    total_working_days = num_days - sundays
+    
+    # 3. Get Attendance for this month
+    start_date = f"{year}-{month:02d}-01"
+    end_date = f"{year}-{month:02d}-{num_days}"
+    
+    attendance_query = """
+        SELECT employee_name, COUNT(DISTINCT date) as days_present 
+        FROM attendance 
+        WHERE date BETWEEN ? AND ? 
+        GROUP BY employee_name
+    """
+    attendance = pd.read_sql(attendance_query, conn, params=(start_date, end_date))
+    conn.close()
+    
+    # 4. Merge Data
+    payroll = pd.merge(users, attendance, left_on="name", right_on="employee_name", how="left")
+    payroll["days_present"] = payroll["days_present"].fillna(0)
+    
+    # 5. Calculate Final Pay
+    # Formula: (Base Salary / Total Working Days) * Days Present
+    payroll["daily_rate"] = payroll["salary"] / total_working_days
+    payroll["final_pay"] = payroll["daily_rate"] * payroll["days_present"]
+    
+    payroll["final_pay"] = payroll["final_pay"].round(2)
+    payroll["base_salary"] = payroll["salary"] # Rename for clarity
+    
+    # Add metadata for display
+    payroll["total_working_days"] = total_working_days
+    
+    return payroll[["name", "base_salary", "total_working_days", "days_present", "final_pay"]]
