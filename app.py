@@ -1,34 +1,17 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import time 
-import calendar # <--- NEW IMPORT
+import time
 from datetime import datetime
 
 # Import database and logic functions
 from databases.db import create_tables
 from utils import (
-    calculate_payroll,
-    load_attendance_data,
-    get_daily_attendance,
-    get_working_hours_summary,
-    get_free_time_employees,
-    get_monthly_report,
-    allocate_task,
-    add_employee_attendance,
-    # REAL-TIME FUNCTIONS
-    get_employee_current_status,
-    mark_punch_in,
-    mark_punch_out,
-    get_my_tasks,
-    update_task_status,
-    get_all_tasks_history,
-    # SECURITY FUNCTIONS
-    login_user,
-    register_user,
-    get_all_users,
-    # NEW FORMATTER
-    format_hours  # <---  Ensures 8.5 -> 8h 30m
+    load_attendance_data, get_daily_attendance, get_working_hours_summary,
+    get_free_time_employees, get_monthly_report, allocate_task, add_employee_attendance,
+    get_employee_current_status, mark_punch_in, mark_punch_out, get_my_tasks, update_task_status,
+    get_all_tasks_history, login_user, register_user, get_all_users, format_hours,
+    calculate_payroll, delete_user_data, delete_task, edit_task
 )
 
 # ---------------------------------------------------
@@ -41,23 +24,33 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Professional CSS Styling
 st.markdown("""
 <style>
+    /* Metric Cards */
     div[data-testid="metric-container"] {
-        background-color: #f0f2f6;
-        border: 1px solid #e6e6e6;
-        padding: 5% 5% 5% 10%;
-        border-radius: 10px;
-        color: rgb(30, 30, 30);
+        background-color: #ffffff;
+        border: 1px solid #e0e0e0;
+        padding: 15px;
+        border-radius: 8px;
+        box-shadow: 0px 2px 5px rgba(0,0,0,0.05);
     }
-    div[data-testid="stSidebarNav"]::before {
-        content: "Navigation";
-        margin-left: 20px;
-        margin-top: 20px;
-        font-size: 20px;
-        font-weight: bold;
+    /* Header */
+    h1, h2, h3 { color: #2c3e50; }
+    
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px; white-space: pre-wrap; background-color: #f1f2f6; border-radius: 5px; color: #555;
     }
+    .stTabs [aria-selected="true"] { background-color: #e1eaf0; color: #2980b9; font-weight: bold; }
+
+    /* Buttons */
+    button[kind="primary"] { background-color: #2980b9; border: none; }
+    button[kind="secondary"] { border-color: #e74c3c; color: #e74c3c; }
+    
+    /* Tables */
+    div[data-testid="stDataFrame"] { border: 1px solid #f0f0f0; border-radius: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -73,22 +66,24 @@ if 'username' not in st.session_state: st.session_state['username'] = None
 # 3. LOGIN SCREEN
 # ---------------------------------------------------
 if st.session_state['role'] is None:
-    st.title("🔒 WorkForce Secure Login")
-    col1, col2 = st.columns([1, 2])
-    with col2:
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        st.title("🔒 WorkForce Login")
+        st.markdown("---")
         with st.form("login_form"):
             user = st.text_input("Username")
             pwd = st.text_input("Password", type="password")
-            if st.form_submit_button("Login"):
-                role, name = login_user(user, pwd)
-                if role:
-                    st.session_state['role'] = role
-                    st.session_state['username'] = name
-                    st.success(f"✅ Welcome back, {name}!")
-                    time.sleep(1); st.rerun()
-                else:
-                    st.error("❌ Invalid Username or Password")
-        st.info("💡 **Default Admin:** `admin` / `123`")
+            if st.form_submit_button("Login", type="primary"):
+                if user.strip() and pwd.strip():
+                    role, name = login_user(user, pwd)
+                    if role:
+                        st.session_state['role'] = role
+                        st.session_state['username'] = name
+                        st.success(f"✅ Welcome, {name}!")
+                        time.sleep(1); st.rerun()
+                    else: st.error("❌ Invalid Username or Password")
+                else: st.warning("⚠️ Enter credentials")
+        st.caption("Admin: `admin` / `123`")
 
 # ---------------------------------------------------
 # 4. EMPLOYEE PORTAL
@@ -98,55 +93,43 @@ elif st.session_state['role'] == 'Employee':
     c1, c2 = st.columns([4, 1])
     with c1: st.title(f"👋 Hello, {name}")
     with c2: 
-        if st.button("🚪 Logout"):
-            st.session_state['role'] = None; st.rerun()
+        if st.button("🚪 Logout"): st.session_state['role'] = None; st.rerun()
 
     st.markdown("---")
-
-    # Status
+    
+    # Status Section
     status = get_employee_current_status(name)
     c_stat, c_act = st.columns(2)
     with c_stat:
         st.subheader("Your Status")
-        if status == 'not_started': st.warning("⚪ You are **NOT** punched in.")
-        elif status == 'working': st.success("🟢 You are **WORKING**.")
-        else: st.info("🏁 Shift **COMPLETED**.")
+        if status == 'not_started': st.warning("⚪ Not Punched In")
+        elif status == 'working': st.success("🟢 Currently Working")
+        else: st.info("🏁 Shift Completed")
     with c_act:
         st.subheader("Action")
         if status == 'not_started':
-            if st.button("👊 PUNCH IN", type="primary"):
-                mark_punch_in(name); time.sleep(1); st.rerun()
+            if st.button("👊 PUNCH IN", type="primary"): mark_punch_in(name); st.rerun()
         elif status == 'working':
-            if st.button("🛑 PUNCH OUT", type="primary"):
-                mark_punch_out(name); time.sleep(1); st.rerun()
+            if st.button("🛑 PUNCH OUT"): mark_punch_out(name); st.rerun()
 
-    # Tasks
-    st.markdown("---")
-    c_th, c_tr = st.columns([4, 1])
-    c_th.subheader("📋 My Tasks")
-    if c_tr.button("🔄 Refresh"): st.rerun()
+    # Tasks Section
+    st.markdown("---"); st.subheader("📋 My Tasks")
+    if st.button("🔄 Refresh"): st.rerun()
     
     my_tasks = get_my_tasks(name)
-    if my_tasks.empty:
-        st.info("🎉 No tasks assigned yet.")
+    if my_tasks.empty: st.info("No tasks assigned.")
     else:
-        for index, row in my_tasks.iterrows():
+        for i, row in my_tasks.iterrows():
             with st.container():
                 c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
-                # Show formatted hours in task card
-                formatted_hrs = format_hours(row['allocated_hours'])
                 c1.write(f"**{row['task_name']}**")
-                c1.caption(f"Time: {formatted_hrs}")
-                
+                c1.caption(f"⏱️ {format_hours(row['allocated_hours'])}")
                 if row['status'] == 'Pending':
                     c2.warning("⏳ Pending")
-                    if c3.button("✅ Accept", key=f"a_{row['id']}"):
-                        update_task_status(row['id'], "Accepted"); time.sleep(1); st.rerun()
-                    if c4.button("❌ Reject", key=f"r_{row['id']}"):
-                        update_task_status(row['id'], "Rejected"); time.sleep(1); st.rerun()
-                elif row['status'] == 'Accepted':
-                    c2.success("✅ Accepted")
-                else: c2.error("❌ Rejected")
+                    if c3.button("✅", key=f"a_{row['id']}"): update_task_status(row['id'], "Accepted"); st.rerun()
+                    if c4.button("❌", key=f"r_{row['id']}"): update_task_status(row['id'], "Rejected"); st.rerun()
+                elif row['status'] == 'Accepted': c2.success("Accepted")
+                else: c2.error("Rejected")
                 st.divider()
 
 # ---------------------------------------------------
@@ -157,153 +140,168 @@ elif st.session_state['role'] == 'Admin':
     with st.sidebar:
         st.title("Admin Portal")
         live_mode = st.toggle("🔴 Live Mode", value=False)
-        if st.button("🚪 Logout"): st.session_state['role'] = None; st.rerun()
-        menu = st.radio("Navigate", ["Dashboard Overview", "Daily Logs", "Monthly Reports", "Task Allocation", "Manage Users"])
-        
         st.markdown("---")
-        st.write("**Manual Override**")
-        with st.form("quick_add_form"):
-            users = get_all_users()
-            opts = users[users['role'] == 'Employee']['name'].unique() if not users.empty else []
-            ne = st.selectbox("Employee", opts)
-            nd = st.date_input("Date")
-            ti = st.time_input("In"); to = st.time_input("Out")
-            if st.form_submit_button("Add"):
-                if add_employee_attendance(ne, nd, ti, to): st.success("Added!"); time.sleep(1); st.rerun()
-                else: st.error("Error")
+        menu = st.radio("Menu", ["Overview", "Attendance Logs", "Monthly Reports", "Payroll", "Task Manager", "Users"])
+        st.markdown("---")
+        if st.button("🚪 Logout"): st.session_state['role'] = None; st.rerun()
+
+        # Manual Override
+        with st.expander("📝 Manual Entry"):
+            with st.form("quick_add"):
+                users = get_all_users()
+                opts = users[users['role'] == 'Employee']['name'].unique() if not users.empty else []
+                ne = st.selectbox("Who?", opts)
+                nd = st.date_input("Date")
+                ti = st.time_input("In"); to = st.time_input("Out")
+                if st.form_submit_button("Add"):
+                    if add_employee_attendance(ne, nd, ti, to): st.success("Saved!"); st.rerun()
+                    else: st.error("Error")
 
     if live_mode: time.sleep(2); st.rerun()
     df = load_attendance_data()
     st.title(f"🏢 {menu}")
 
     # --- VIEW 1: OVERVIEW ---
-    if menu == "Dashboard Overview":
-        if df.empty: st.info("No data.")
+    if menu == "Overview":
+        if df.empty: st.info("Waiting for data...")
         else:
-            latest = df[df["date"] == df["date"].max()]
+            lat = df[df["date"] == df["date"].max()]
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Staff", df['employee_name'].nunique())
-            c2.metric("Active", latest.shape[0])
+            c2.metric("Active Today", lat.shape[0])
+            c3.metric("Avg Hours", format_hours(lat['working_hours'].mean()))
+            c4.metric("Last Update", df["date"].max().strftime('%d %b'))
             
-            # Format Average Hours
-            avg_raw = latest['working_hours'].mean()
-            c3.metric("Avg Hours", format_hours(avg_raw)) # <--- FORMATTED (e.g. 8h 30m)
-            c4.metric("Date", df["date"].max().strftime('%d %b'))
-
             st.divider()
             c_ch1, c_ch2 = st.columns([2, 1])
             with c_ch1:
-                st.subheader("Leaderboard")
-                summ = get_working_hours_summary(df)
-                if not summ.empty:
-                    # Apply formatting for display table
-                    display_summ = summ.copy()
-                    display_summ['Total Time'] = display_summ['total_hours'].apply(format_hours)
-                    display_summ['Avg Daily'] = display_summ['average_hours'].apply(format_hours)
-                    # Show formatted columns
-                    st.dataframe(display_summ[['employee_name', 'Total Time', 'Avg Daily']], use_container_width=True)
-            
+                st.subheader("🏆 Leaderboard")
+                sum_df = get_working_hours_summary(df)
+                if not sum_df.empty:
+                    # Chart uses NUMBERS (float)
+                    st.bar_chart(sum_df.set_index("employee_name")['total_hours'], color="#2980b9")
             with c_ch2:
                 st.subheader("Recent")
-                # Apply formatting
-                display_latest = latest.copy()
-                display_latest['Time'] = display_latest['working_hours'].apply(format_hours)
-                st.dataframe(display_latest[['employee_name', 'Time']], hide_index=True)
+                lat_disp = lat.copy()
+                lat_disp['Time'] = lat_disp['working_hours'].apply(format_hours)
+                st.dataframe(lat_disp[['employee_name', 'Time']], hide_index=True)
 
-    # --- VIEW 2: DAILY LOGS ---
-    elif menu == "Daily Logs":
-        if df.empty: st.warning("No data.")
-        else:
-            sd = st.date_input("Date", df["date"].max())
-            ddf = get_daily_attendance(df, pd.to_datetime(sd))
-            
-            def style_int(val):
-                if isinstance(val, str) and "✅" in val: return "background-color: #1adb1a; color: black; font-weight: bold;"
-                if isinstance(val, str) and "⏳" in val: return "background-color: #fff3cd; color: black;"
-                return ""
-            
-            # Apply Formatting to Working Hours
-            # 8.25 -> 8h 15m
-            ddf['working_hours'] = ddf['working_hours'].apply(format_hours) 
-            
-            st.dataframe(ddf.style.map(style_int), use_container_width=True)
+    # --- VIEW 2: LOGS ---
+    elif menu == "Attendance Logs":
+        sd = st.date_input("Filter Date", df["date"].max() if not df.empty else datetime.now())
+        ddf = get_daily_attendance(df, pd.to_datetime(sd))
+        if not ddf.empty:
+            ddf['working_hours'] = ddf['working_hours'].apply(format_hours)
+            def sty(v): return "background-color: #d4edda; color: black;" if "✅" in str(v) else ""
+            st.dataframe(ddf.style.map(sty), use_container_width=True)
+        else: st.info("No records for this date.")
 
-    # --- VIEW 3: MONTHLY REPORTS ---
+    # --- VIEW 3: MONTHLY REPORTS (FIXED GRAPH) ---
     elif menu == "Monthly Reports":
-        if df.empty: st.warning("No data.")
-        else:
-            mdf = get_monthly_report(df)
-            t1, t2 = st.tabs(["Chart", "Data"])
+        mdf = get_monthly_report(df)
+        if not mdf.empty:
+            t1, t2 = st.tabs(["📊 Trends", "📄 Detailed Data"])
             with t1:
-                pdf = mdf.copy(); pdf["month"] = pdf["month"].astype(str)
-                st.plotly_chart(px.line(pdf, x="month", y="total_hours", color="employee_name"), use_container_width=True)
+                # FIX: Chart uses raw FLOAT values, NOT formatted strings
+                fig = px.line(mdf, x="month", y="total_hours", color="employee_name", markers=True,
+                              title="Monthly Working Hours Trend")
+                st.plotly_chart(fig, use_container_width=True)
             with t2:
-                # Apply Formatting
-                mdf['total_hours'] = mdf['total_hours'].apply(format_hours)
-                mdf['average_hours'] = mdf['average_hours'].apply(format_hours)
-                st.dataframe(mdf, use_container_width=True)
+                # Table uses formatted STRINGS for readability
+                disp_mdf = mdf.copy()
+                disp_mdf['total_hours'] = disp_mdf['total_hours'].apply(format_hours)
+                disp_mdf['average_hours'] = disp_mdf['average_hours'].apply(format_hours)
+                st.dataframe(disp_mdf, use_container_width=True)
+        else: st.info("Not enough data for monthly analysis.")
 
-    # VIEW 4: PAYROLL (NEW)
-    elif menu == "Payroll & Salary":
+    # --- VIEW 4: PAYROLL ---
+    elif menu == "Payroll":
         c1, c2, c3 = st.columns(3)
-        sel_year = c1.number_input("Year", min_value=2024, max_value=2030, value=datetime.now().year)
-        sel_month = c2.selectbox("Month", range(1, 13), index=datetime.now().month - 1)
-        
-        if c3.button("💰 Calculate Salary", type="primary"):
-            payroll_df = calculate_payroll(sel_year, sel_month)
-            if not payroll_df.empty:
-                st.success(f"Payroll for {sel_month}/{sel_year}")
-                
-                # Formatting Currency
-                payroll_df['base_salary'] = payroll_df['base_salary'].apply(lambda x: f"₹{x:,.2f}")
-                payroll_df['final_pay'] = payroll_df['final_pay'].apply(lambda x: f"₹{x:,.2f}")
-                
-                st.dataframe(payroll_df, use_container_width=True)
-            else:
-                st.warning("No employee data found for calculation.")
+        yr = c1.number_input("Year", 2024, 2030, datetime.now().year)
+        mn = c2.selectbox("Month", range(1, 13), datetime.now().month - 1)
+        if c3.button("Generate Payroll", type="primary"):
+            pdf = calculate_payroll(yr, mn)
+            if not pdf.empty:
+                st.success(f"Payroll Generated for {mn}/{yr}")
+                pdf['base_salary'] = pdf['base_salary'].apply(lambda x: f"₹{x:,.0f}")
+                pdf['final_pay'] = pdf['final_pay'].apply(lambda x: f"₹{x:,.0f}")
+                st.dataframe(pdf, use_container_width=True)
+            else: st.warning("No data available.")
 
-    # --- VIEW 4: TASK ALLOCATION ---
-    elif menu == "Task Allocation":
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("Available Staff")
-            free_emp = get_free_time_employees(df)
-            if free_emp.empty: st.success("All Busy!")
-            else:
-                # Apply Formatting (e.g. 0.5 -> 30m)
-                free_emp['free_hours'] = free_emp['free_hours'].apply(format_hours)
-                st.dataframe(free_emp, use_container_width=True)
-                
-        with c2:
-            st.subheader("Assign Task")
-            with st.form("alloc"):
-                opts = get_free_time_employees(df)["employee_name"].unique() # Get names
-                emp = st.selectbox("Employee", opts) if len(opts) > 0 else st.selectbox("Employee", ["None"], disabled=True)
-                task = st.text_input("Task")
-                hrs = st.slider("Hours", 0.5, 8.0, 2.0, step=0.5)
-                if st.form_submit_button("Assign"):
-                    allocate_task(emp, task, hrs); st.success("Assigned!"); time.sleep(1); st.rerun()
-
-        st.markdown("---"); st.subheader("History")
-        hist = get_all_tasks_history()
+    # --- VIEW 5: TASK MANAGER (EDIT/DELETE ADDED) ---
+    elif menu == "Task Manager":
+        tab_assign, tab_manage = st.tabs(["➕ Assign Task", "⚙️ Manage Tasks"])
         
-        def hl_stat(v):
-            if v=='Accepted': return 'color: green; font-weight: bold'
-            if v=='Rejected': return 'color: red; font-weight: bold'
-            return ''
+        # TAB 1: CREATE
+        with tab_assign:
+            c1, c2 = st.columns([1, 2])
+            with c1:
+                st.subheader("Available Staff")
+                free = get_free_time_employees(df)
+                if not free.empty: 
+                    free['free_hours'] = free['free_hours'].apply(format_hours)
+                    st.dataframe(free, use_container_width=True)
+                else: st.success("Everyone is busy!")
             
-        if not hist.empty:
-            # Apply Formatting to History Table as well
-            hist['allocated_hours'] = hist['allocated_hours'].apply(format_hours) 
-            st.dataframe(hist.style.map(hl_stat, subset=['status']), use_container_width=True)
+            with c2:
+                st.subheader("Assign New")
+                with st.form("task_f"):
+                    opts = get_free_time_employees(df)["employee_name"].unique()
+                    emp = st.selectbox("To", opts) if len(opts)>0 else st.text_input("To (Manual)")
+                    tsk = st.text_input("Task Detail")
+                    hrs = st.slider("Duration (Hrs)", 0.5, 8.0, 2.0, 0.5)
+                    if st.form_submit_button("Assign Task"):
+                        if tsk: allocate_task(emp, tsk, hrs); st.success("Sent!"); st.rerun()
+                        else: st.error("Add details")
 
-    # --- VIEW 5: USERS ---
-    elif menu == "Manage Users":
-        st.subheader("Create User")
-        with st.form("au"):
-            u = st.text_input("Username"); p = st.text_input("Password", type="password")
-            n = st.text_input("Name"); r = st.selectbox("Role", ["Employee", "Admin"])
-            if st.form_submit_button("Create"):
-                if register_user(u, p, n, r): st.success("Created!")
-                else: st.error("Error")
+        # TAB 2: MANAGE (EDIT/DELETE)
+        with tab_manage:
+            st.subheader("Active Tasks")
+            all_tasks = get_all_tasks_history()
+            
+            if not all_tasks.empty:
+                for i, row in all_tasks.iterrows():
+                    with st.expander(f"{row['task_name']} ({row['employee_name']}) - {row['status']}"):
+                        ec1, ec2 = st.columns([3, 1])
+                        with ec1:
+                            with st.form(f"edit_{row['id']}"):
+                                new_name = st.text_input("Task Name", row['task_name'])
+                                new_hrs = st.number_input("Hours", value=float(row['allocated_hours']), step=0.5)
+                                if st.form_submit_button("Update Task"):
+                                    if edit_task(row['id'], new_name, new_hrs): st.success("Updated!"); time.sleep(1); st.rerun()
+                        with ec2:
+                            st.write("Actions")
+                            if st.button("🗑️ Delete", key=f"del_{row['id']}", type="secondary"):
+                                if delete_task(row['id']): st.warning("Deleted"); time.sleep(1); st.rerun()
+            else:
+                st.info("No tasks found.")
+
+    # --- VIEW 6: USERS (DELETE ADDED) ---
+    elif menu == "Users":
+        t_create, t_delete = st.tabs(["Add User", "Delete User"])
+        
+        with t_create:
+            with st.form("new_u"):
+                c1, c2 = st.columns(2)
+                u = c1.text_input("Username"); p = c2.text_input("Password", type="password")
+                n = c1.text_input("Full Name"); s = c2.number_input("Salary", value=10000)
+                r = st.selectbox("Role", ["Employee", "Admin"])
+                if st.form_submit_button("Create User"):
+                    if u and p and n:
+                        if register_user(u, p, n, r, s): st.success("Created!"); st.rerun()
+                        else: st.error("Exists!")
+                    else: st.warning("Fill all fields")
+        
+        with t_delete:
+            st.error("⚠️ Danger Zone: Deleting a user removes ALL their attendance & task history.")
+            all_u = get_all_users()
+            if not all_u.empty:
+                del_opts = all_u[all_u['username']!='admin']['username'].unique()
+                target = st.selectbox("Select User to Delete", del_opts)
+                if st.button(f"Permanently Delete {target}", type="secondary"):
+                    succ, msg = delete_user_data(target)
+                    if succ: st.success(msg); time.sleep(2); st.rerun()
+                    else: st.error(msg)
+            
+        st.markdown("---")
         st.dataframe(get_all_users())
