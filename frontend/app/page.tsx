@@ -17,16 +17,20 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      // Connect to your FastAPI Backend
       const res = await axios.post("http://localhost:8000/api/login", {
         username: username,
         password: password
       });
 
       if (res.data.role) {
-        // Login Successful
-        // In a real app, you would save the token here (e.g., localStorage)
+        // --- FIX STARTS HERE ---
+        // 1. Save credentials to Browser Storage
+        localStorage.setItem("role", res.data.role);
+        localStorage.setItem("username", res.data.name);
+        
+        // 2. Redirect based on Role
         router.push("/dashboard");
+        // --- FIX ENDS HERE ---
       }
     } catch (err: any) {
       if (err.response) {
@@ -43,7 +47,6 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4">
       <div className="bg-slate-900 p-8 rounded-2xl shadow-2xl w-full max-w-md border border-slate-800">
         
-        {/* Logo Icon */}
         <div className="flex justify-center mb-8">
           <div className="h-16 w-16 bg-slate-800 rounded-2xl flex items-center justify-center text-blue-500 shadow-inner border border-slate-700">
             <Lock size={32} />
@@ -53,7 +56,6 @@ export default function LoginPage() {
         <h2 className="text-center text-3xl font-bold text-white mb-2">Welcome Back</h2>
         <p className="text-center text-slate-400 mb-8 text-sm">Enter your credentials to access the workspace</p>
         
-        {/* Error Message */}
         {error && (
           <div className="bg-red-900/20 border border-red-900/50 text-red-400 p-3 rounded-lg mb-6 flex items-center gap-2 text-sm">
             <AlertCircle size={16} />
@@ -92,12 +94,6 @@ export default function LoginPage() {
             {loading ? <Loader2 className="animate-spin" size={20} /> : "Sign In"}
           </button>
         </form>
-
-        <div className="mt-8 text-center">
-          <p className="text-xs text-slate-500">
-            Protected by <span className="text-slate-400 font-medium">WorkForce Pro Security</span>
-          </p>
-        </div>
       </div>
     </div>
   );

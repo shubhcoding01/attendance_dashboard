@@ -1,7 +1,7 @@
 import pandas as pd
 import hashlib
 import calendar 
-from datetime import datetime
+from datetime import datetime, timedelta
 from databases.db import get_connection
 
 FULL_DAY_HOURS = 8
@@ -133,7 +133,7 @@ def mark_punch_out(employee_name):
     finally: conn.close()
 
 # ---------------------------------------------------
-# 5. TASKS (EDIT & DELETE ADDED)
+# 5. TASKS (CORE)
 # ---------------------------------------------------
 def get_my_tasks(employee_name):
     conn = get_connection()
@@ -146,7 +146,6 @@ def get_my_tasks(employee_name):
 def get_all_tasks_history():
     conn = get_connection()
     try: 
-        # FIX: ADDED 'id' TO SELECT FOR EDIT/DELETE
         return pd.read_sql("SELECT id, date, employee_name, task_name, allocated_hours, status FROM tasks ORDER BY id DESC", conn)
     except: return pd.DataFrame()
     finally: conn.close()
@@ -162,7 +161,7 @@ def update_task_status(task_id, new_status):
 def allocate_task(employee_name, task_name, hours):
     conn = get_connection(); cursor = conn.cursor()
     try:
-        cursor.execute("INSERT INTO tasks (employee_name, date, task_name, allocated_hours, status) VALUES (?, DATE('now'), ?, ?, 'Pending')", 
+        cursor.execute("INSERT INTO tasks (employee_name, date, task_name, description, allocated_hours, status) VALUES (?, DATE('now'), ?, '', ?, 'To Do')", 
                        (employee_name, task_name, hours))
         conn.commit()
     except: pass
@@ -186,25 +185,6 @@ def edit_task(task_id, new_task_name, new_hours):
         conn.commit(); return True
     except: return False
     finally: conn.close()
-
-def get_free_time_employees(df):
-    if df.empty: return pd.DataFrame(columns=["employee_name", "free_hours"])
-    latest = df.sort_values("date").groupby("employee_name").tail(1).copy()
-    
-    conn = get_connection()
-    try:
-        tasks = pd.read_sql("SELECT employee_name, allocated_hours FROM tasks WHERE date = ? AND status = 'Accepted'", 
-                            conn, params=(datetime.now().strftime("%Y-%m-%d"),))
-    except: tasks = pd.DataFrame(columns=["employee_name", "allocated_hours"])
-    finally: conn.close()
-
-    if not tasks.empty: task_sum = tasks.groupby("employee_name")["allocated_hours"].sum().reset_index()
-    else: task_sum = pd.DataFrame(columns=["employee_name", "allocated_hours"])
-    
-    merged = pd.merge(latest, task_sum, on="employee_name", how="left")
-    merged["allocated_hours"] = merged["allocated_hours"].fillna(0)
-    merged["free_hours"] = FULL_DAY_HOURS - (merged["working_hours"] + merged["allocated_hours"])
-    return merged[merged["free_hours"] > 0.1][["employee_name", "free_hours"]]
 
 # ---------------------------------------------------
 # 6. REPORTING & UTILS
@@ -271,3 +251,150 @@ def calculate_payroll(year, month):
     pay["total_working_days"] = total_working_days
     
     return pay[["name", "salary", "total_working_days", "days_present", "final_pay"]].rename(columns={"salary": "base_salary"})
+
+def get_weekly_trend(df):
+    if df.empty:
+        return []
+
+    # 1. Get last 7 days range
+    end_date = datetime.now().date()
+    start_date = end_date - timedelta(days=6)
+    
+    # 2. Filter data for this range
+    mask = (df['date'].dt.date >= start_date) & (df['date'].dt.date <= end_date)
+    weekly_df = df.loc[mask].copy()
+
+    # 3. Group by date and count unique employees
+    daily_counts = weekly_df.groupby(weekly_df['date'].dt.date)['employee_name'].nunique()
+
+    # 4. Format for Recharts
+    trend_data = []
+    for i in range(7):
+        current_day = start_date + timedelta(days=i)
+        day_name = current_day.strftime("%a")
+        count = daily_counts.get(current_day, 0)
+        
+        trend_data.append({
+            "name": day_name,
+            "present": int(count),
+            "full_date": current_day.strftime("%Y-%m-%d")
+        })
+        
+    return trend_data
+
+# ---------------------------------------------------
+# 8. JIRA / TASK BOARD FEATURES
+# ---------------------------------------------------
+
+def get_tasks_with_subtasks():
+    conn = get_connection()
+    try:
+        df = pd.read_sql("SELECT * FROM tasks ORDER BY id ASC", conn)
+    except:
+        conn.close()
+        return []
+    conn.close()
+
+    if df.empty:
+        return []
+
+    if 'parent_id' not in df.columns:
+        return []
+
+    # JSON Fix: Replace NaN with None
+    df = df.where(pd.notnull(df), None)
+    
+    tasks = df.to_dict(orient="records")
+    
+    parents = [t for t in tasks if not t['parent_id']]
+    subtasks = [t for t in tasks if t['parent_id']]
+
+    parents.reverse() 
+
+    for p in parents:
+        children = [s for s in subtasks if s['parent_id'] == p['id']]
+        p['subtasks'] = children
+        
+        if children:
+            done_count = sum(1 for c in children if c['status'] == 'Done')
+            p['progress'] = int((done_count / len(children)) * 100) if len(children) > 0 else 0
+        else:
+            p['progress'] = 100 if p['status'] == 'Done' else 0
+
+    return parents
+
+def get_free_time_employees(df):
+    conn = get_connection()
+    
+    try:
+        users = pd.read_sql("SELECT name as employee_name FROM users WHERE role = 'Employee'", conn)
+    except:
+        users = pd.DataFrame(columns=["employee_name"])
+    
+    try:
+        tasks = pd.read_sql("SELECT employee_name, allocated_hours FROM tasks WHERE date = ? AND status != 'Rejected'", 
+                            conn, params=(datetime.now().strftime("%Y-%m-%d"),))
+    except:
+        tasks = pd.DataFrame(columns=["employee_name", "allocated_hours"])
+    
+    conn.close()
+
+    if users.empty:
+        return []
+
+    if not tasks.empty:
+        task_sum = tasks.groupby("employee_name")["allocated_hours"].sum().reset_index()
+        merged = pd.merge(users, task_sum, on="employee_name", how="left")
+    else:
+        merged = users.copy()
+        merged["allocated_hours"] = 0
+
+    merged["allocated_hours"] = merged["allocated_hours"].fillna(0.0)
+    merged["free_hours"] = FULL_DAY_HOURS - merged["allocated_hours"] 
+
+    result = merged[merged["free_hours"] >= 0.5][["employee_name", "free_hours"]]
+    
+    return result.where(pd.notnull(result), None).to_dict(orient="records")
+
+def get_task_details(task_id):
+    """Fetches a single task and its subtasks for the Lightbox."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+    parent = cursor.fetchone()
+    
+    if not parent:
+        conn.close()
+        return None
+    
+    cursor.execute("SELECT * FROM tasks WHERE parent_id = ? ORDER BY id ASC", (task_id,))
+    children = cursor.fetchall()
+    conn.close()
+    
+    result = dict(parent)
+    result['subtasks'] = [dict(c) for c in children]
+    
+    # Calculate progress
+    if result['subtasks']:
+        done = sum(1 for c in result['subtasks'] if c['status'] == 'Done')
+        result['progress'] = int((done / len(result['subtasks'])) * 100)
+    else:
+        result['progress'] = 100 if result['status'] == 'Done' else 0
+
+    return result
+
+def add_subtask(parent_id, task_name, hours):
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT employee_name FROM tasks WHERE id = ?", (parent_id,))
+    parent = cursor.fetchone()
+    
+    if parent:
+        cursor.execute('''
+            INSERT INTO tasks (employee_name, date, task_name, allocated_hours, status, parent_id) 
+            VALUES (?, DATE('now'), ?, ?, 'To Do', ?)
+        ''', (parent['employee_name'], task_name, hours, parent_id))
+        conn.commit()
+    conn.close()

@@ -40,8 +40,7 @@
 #         )
 #     """)
 
-#     # 2. Create Tasks Table (UPDATED)
-#     # Added 'status' column to track Acceptance/Rejection
+#     # 2. Create Tasks Table
 #     cursor.execute("""
 #         CREATE TABLE IF NOT EXISTS tasks (
 #             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,13 +52,15 @@
 #         )
 #     """)
 
-#     # 3. Create Users Table
+#     # 3. Create Users Table (UPDATED)
+#     # Added 'salary' column with default 10000
 #     cursor.execute("""
 #         CREATE TABLE IF NOT EXISTS users (
 #             username TEXT PRIMARY KEY,
 #             password TEXT NOT NULL,
 #             role TEXT NOT NULL, 
-#             name TEXT NOT NULL
+#             name TEXT NOT NULL,
+#             salary INTEGER DEFAULT 10000
 #         )
 #     """)
     
@@ -67,8 +68,9 @@
 #     try:
 #         # We hash '123' before storing it
 #         admin_pass_hash = hash_password('123') 
-#         cursor.execute("INSERT INTO users (username, password, role, name) VALUES (?, ?, ?, ?)", 
-#                        ('admin', admin_pass_hash, 'Admin', 'Administrator'))
+#         # Added salary=0 for Admin
+#         cursor.execute("INSERT INTO users (username, password, role, name, salary) VALUES (?, ?, ?, ?, ?)", 
+#                        ('admin', admin_pass_hash, 'Admin', 'Administrator', 0))
 #         print("✅ Default Admin created (admin/123).")
 #     except sqlite3.IntegrityError:
 #         pass # Admin already exists
@@ -91,7 +93,7 @@
 
 import sqlite3
 import os
-import hashlib # <--- For Password Hashing
+import hashlib 
 
 # Ensure the folder exists so the app doesn't crash on startup
 DB_FOLDER = "databases"
@@ -103,11 +105,15 @@ def get_connection():
     if not os.path.exists(DB_FOLDER):
         os.makedirs(DB_FOLDER)
         
-    # 2. Connect with check_same_thread=False (Required for Streamlit)
+    # 2. Connect with check_same_thread=False (Required for FastAPI/Streamlit)
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     
     # 3. Enable column access by name (row['date'])
     conn.row_factory = sqlite3.Row 
+    
+    # 4. Enable Foreign Keys (CRITICAL for parent_id to work)
+    conn.execute("PRAGMA foreign_keys = ON")
+    
     return conn
 
 # --- PASSWORD HASHING HELPER ---
@@ -131,20 +137,26 @@ def create_tables():
         )
     """)
 
-    # 2. Create Tasks Table
+    # 2. Create Tasks Table (UPDATED FOR JIRA FEATURES)
+    # - description: For detailed task info
+    # - parent_id: Links to another task (Sub-task)
+    # - allocated_hours: REAL (Allows 0.5 hours)
+    # - status: Defaults to 'To Do' (Workflow start)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             employee_name TEXT,
             date TEXT,
             task_name TEXT,
-            allocated_hours INTEGER,
-            status TEXT DEFAULT 'Pending'
+            description TEXT DEFAULT '',
+            allocated_hours REAL, 
+            status TEXT DEFAULT 'To Do',
+            parent_id INTEGER,
+            FOREIGN KEY(parent_id) REFERENCES tasks(id) ON DELETE CASCADE
         )
     """)
 
-    # 3. Create Users Table (UPDATED)
-    # Added 'salary' column with default 10000
+    # 3. Create Users Table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
@@ -159,7 +171,6 @@ def create_tables():
     try:
         # We hash '123' before storing it
         admin_pass_hash = hash_password('123') 
-        # Added salary=0 for Admin
         cursor.execute("INSERT INTO users (username, password, role, name, salary) VALUES (?, ?, ?, ?, ?)", 
                        ('admin', admin_pass_hash, 'Admin', 'Administrator', 0))
         print("✅ Default Admin created (admin/123).")
