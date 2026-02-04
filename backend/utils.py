@@ -1,3 +1,405 @@
+# import pandas as pd
+# import hashlib
+# import calendar 
+# from datetime import datetime, timedelta
+# from databases.db import get_connection
+
+# FULL_DAY_HOURS = 8
+
+# # ---------------------------------------------------
+# # 1. CONFIGURATION (HOLIDAYS 2026)
+# # ---------------------------------------------------
+# HOLIDAYS_2026 = [
+#     "2026-01-01", "2026-01-15", "2026-01-26", "2026-03-19", 
+#     "2026-05-01", "2026-08-15", "2026-09-14", "2026-10-02", 
+#     "2026-10-20", "2026-10-21", "2026-12-25"
+# ]
+
+# # ---------------------------------------------------
+# # 2. SECURITY & USERS
+# # ---------------------------------------------------
+# def make_hashes(password):
+#     return hashlib.sha256(str(password).encode('utf-8')).hexdigest()
+
+# def check_hashes(password, hashed_text):
+#     if make_hashes(password) == hashed_text: return True
+#     return False
+
+# def login_user(username, password):
+#     conn = get_connection(); cursor = conn.cursor()
+#     try:
+#         cursor.execute("SELECT role, name, password FROM users WHERE username = ?", (username,))
+#         user = cursor.fetchone()
+#         if user and check_hashes(password, user['password']): return user['role'], user['name']
+#     except: pass
+#     finally: conn.close()
+#     return None, None
+
+# def register_user(username, password, name, role='Employee', salary=10000):
+#     conn = get_connection(); cursor = conn.cursor()
+#     hashed = make_hashes(password)
+#     try:
+#         cursor.execute("INSERT INTO users (username, password, role, name, salary) VALUES (?, ?, ?, ?, ?)", 
+#                        (username, hashed, role, name, salary))
+#         conn.commit(); return True
+#     except: return False
+#     finally: conn.close()
+
+# def get_all_users():
+#     conn = get_connection()
+#     try: return pd.read_sql("SELECT username, role, name, salary FROM users", conn)
+#     except: return pd.DataFrame()
+#     finally: conn.close()
+
+# def delete_user_data(username):
+#     """Safely deletes a user and ALL related data."""
+#     if username == 'admin': return False, "❌ Cannot delete Admin!"
+    
+#     conn = get_connection(); cursor = conn.cursor()
+#     try:
+#         cursor.execute("SELECT name FROM users WHERE username = ?", (username,))
+#         res = cursor.fetchone()
+#         if not res: return False, "User not found"
+#         name = res['name']
+
+#         # Cascading Delete
+#         cursor.execute("DELETE FROM attendance WHERE employee_name = ?", (name,))
+#         cursor.execute("DELETE FROM tasks WHERE employee_name = ?", (name,))
+#         cursor.execute("DELETE FROM users WHERE username = ?", (username,))
+#         conn.commit()
+#         return True, f"✅ User {name} and all data deleted."
+#     except Exception as e: return False, str(e)
+#     finally: conn.close()
+
+# # ---------------------------------------------------
+# # 3. ATTENDANCE
+# # ---------------------------------------------------
+# def load_attendance_data():
+#     conn = get_connection()
+#     try:
+#         df = pd.read_sql("SELECT employee_name, date, login_time, logout_time FROM attendance", conn)
+#     except: return pd.DataFrame(columns=["employee_name", "date", "working_hours"])
+#     finally: conn.close()
+
+#     if df.empty: return pd.DataFrame(columns=["employee_name", "date", "working_hours"])
+
+#     df["date"] = pd.to_datetime(df["date"])
+#     df["login_time"] = pd.to_datetime(df["login_time"], format="%H:%M", errors='coerce')
+#     df["logout_time"] = pd.to_datetime(df["logout_time"], format="%H:%M", errors='coerce')
+    
+#     calc_logout = df["logout_time"].fillna(df["login_time"])
+#     df["working_hours"] = (calc_logout - df["login_time"]).dt.total_seconds() / 3600
+#     return df
+
+# def add_employee_attendance(name, date, login, logout):
+#     conn = get_connection(); cursor = conn.cursor()
+#     try:
+#         cursor.execute("INSERT INTO attendance (employee_name, date, login_time, logout_time) VALUES (?, ?, ?, ?)", 
+#                        (name, date.strftime("%Y-%m-%d"), login.strftime("%H:%M"), logout.strftime("%H:%M")))
+#         conn.commit(); return True
+#     except: return False
+#     finally: conn.close()
+
+# # ---------------------------------------------------
+# # 4. REAL-TIME
+# # ---------------------------------------------------
+# def get_employee_current_status(employee_name):
+#     conn = get_connection()
+#     try:
+#         df = pd.read_sql("SELECT logout_time FROM attendance WHERE employee_name = ? AND date = ?", 
+#                          conn, params=(employee_name, datetime.now().strftime("%Y-%m-%d")))
+#         if df.empty: return 'not_started'
+#         if pd.isna(df.iloc[0]['logout_time']) or df.iloc[0]['logout_time'] == "": return 'working'
+#         return 'completed'
+#     except: return 'not_started'
+#     finally: conn.close()
+
+# def mark_punch_in(employee_name):
+#     conn = get_connection(); cursor = conn.cursor(); now = datetime.now()
+#     try:
+#         cursor.execute("INSERT INTO attendance (employee_name, date, login_time, logout_time) VALUES (?, ?, ?, ?)", 
+#                        (employee_name, now.strftime("%Y-%m-%d"), now.strftime("%H:%M"), None))
+#         conn.commit(); return True
+#     except: return False
+#     finally: conn.close()
+
+# def mark_punch_out(employee_name):
+#     conn = get_connection(); cursor = conn.cursor(); now = datetime.now()
+#     try:
+#         cursor.execute("UPDATE attendance SET logout_time = ? WHERE employee_name = ? AND date = ?", 
+#                        (now.strftime("%H:%M"), employee_name, now.strftime("%Y-%m-%d")))
+#         conn.commit(); return True
+#     except: return False
+#     finally: conn.close()
+
+# # ---------------------------------------------------
+# # 5. TASKS (CORE)
+# # ---------------------------------------------------
+# def get_my_tasks(employee_name):
+#     conn = get_connection()
+#     try:
+#         return pd.read_sql("SELECT id, task_name, allocated_hours, status FROM tasks WHERE employee_name = ? AND date = ?", 
+#                            conn, params=(employee_name, datetime.now().strftime("%Y-%m-%d")))
+#     except: return pd.DataFrame()
+#     finally: conn.close()
+
+# def get_all_tasks_history():
+#     conn = get_connection()
+#     try: 
+#         return pd.read_sql("SELECT id, date, employee_name, task_name, allocated_hours, status FROM tasks ORDER BY id DESC", conn)
+#     except: return pd.DataFrame()
+#     finally: conn.close()
+
+# def update_task_status(task_id, new_status):
+#     conn = get_connection(); cursor = conn.cursor()
+#     try:
+#         cursor.execute("UPDATE tasks SET status = ? WHERE id = ?", (new_status, task_id))
+#         conn.commit(); return True
+#     except: return False
+#     finally: conn.close()
+
+# def allocate_task(employee_name, task_name, hours):
+#     conn = get_connection(); cursor = conn.cursor()
+#     try:
+#         cursor.execute("INSERT INTO tasks (employee_name, date, task_name, description, allocated_hours, status) VALUES (?, DATE('now'), ?, '', ?, 'To Do')", 
+#                        (employee_name, task_name, hours))
+#         conn.commit()
+#     except: pass
+#     finally: conn.close()
+
+# def delete_task(task_id):
+#     """Deletes a task permanently."""
+#     conn = get_connection(); cursor = conn.cursor()
+#     try:
+#         cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+#         conn.commit(); return True
+#     except: return False
+#     finally: conn.close()
+
+# def edit_task(task_id, new_task_name, new_hours):
+#     """Updates task details."""
+#     conn = get_connection(); cursor = conn.cursor()
+#     try:
+#         cursor.execute("UPDATE tasks SET task_name = ?, allocated_hours = ? WHERE id = ?", 
+#                        (new_task_name, new_hours, task_id))
+#         conn.commit(); return True
+#     except: return False
+#     finally: conn.close()
+
+# # ---------------------------------------------------
+# # 6. REPORTING & UTILS
+# # ---------------------------------------------------
+# def get_daily_attendance(df, selected_date):
+#     if df.empty: return pd.DataFrame()
+#     ddf = df[df["date"] == selected_date].copy()
+#     if ddf.empty: return pd.DataFrame(columns=["employee_name", "working_hours", "status"])
+#     ddf["status"] = ddf.apply(lambda r: "✅ Present" if r['working_hours'] > 0 else "⏳ Working", axis=1)
+#     return ddf[["employee_name", "working_hours", "status"]]
+
+# def get_working_hours_summary(df):
+#     if df.empty: return pd.DataFrame(columns=["employee_name", "total_hours", "average_hours"])
+#     return df.groupby("employee_name").agg(
+#         total_hours=("working_hours", "sum"),
+#         average_hours=("working_hours", "mean")
+#     ).reset_index().sort_values("total_hours", ascending=False)
+
+# def get_monthly_report(df):
+#     if df.empty: return pd.DataFrame()
+#     df = df.copy()
+#     df["month_period"] = df["date"].dt.to_period("M")
+    
+#     rep = df.groupby(["employee_name", "month_period"]).agg(
+#         working_days=("date", "nunique"),
+#         total_hours=("working_hours", "sum"),
+#         average_hours=("working_hours", "mean")
+#     ).reset_index()
+    
+#     rep["month"] = rep["month_period"].astype(str) # Fix KeyError
+#     return rep.drop(columns=["month_period"])
+
+# def format_hours(val):
+#     if pd.isna(val) or val <= 0: return "-"
+#     mins = int(round(val * 60))
+#     h, m = divmod(mins, 60)
+#     return f"{h}h {m}m" if m!=0 else f"{h}h"
+
+# # ---------------------------------------------------
+# # 7. PAYROLL
+# # ---------------------------------------------------
+# def calculate_payroll(year, month):
+#     conn = get_connection()
+#     users = pd.read_sql("SELECT name, salary FROM users WHERE role='Employee'", conn)
+#     if users.empty: conn.close(); return pd.DataFrame()
+
+#     _, num_days = calendar.monthrange(year, month)
+#     non_working = 0
+#     for day in range(1, num_days + 1):
+#         dt = datetime(year, month, day)
+#         if dt.weekday() == 6 or (year == 2026 and dt.strftime("%Y-%m-%d") in HOLIDAYS_2026):
+#             non_working += 1
+            
+#     total_working_days = max(1, num_days - non_working)
+    
+#     start, end = f"{year}-{month:02d}-01", f"{year}-{month:02d}-{num_days}"
+#     att = pd.read_sql("SELECT employee_name, COUNT(DISTINCT date) as days_present FROM attendance WHERE date BETWEEN ? AND ? GROUP BY employee_name", 
+#                       conn, params=(start, end))
+#     conn.close()
+    
+#     pay = pd.merge(users, att, left_on="name", right_on="employee_name", how="left")
+#     pay["days_present"] = pay["days_present"].fillna(0)
+#     pay["final_pay"] = ((pay["salary"] / total_working_days) * pay["days_present"]).round(0)
+#     pay["total_working_days"] = total_working_days
+    
+#     return pay[["name", "salary", "total_working_days", "days_present", "final_pay"]].rename(columns={"salary": "base_salary"})
+
+# def get_weekly_trend(df):
+#     if df.empty:
+#         return []
+
+#     # 1. Get last 7 days range
+#     end_date = datetime.now().date()
+#     start_date = end_date - timedelta(days=6)
+    
+#     # 2. Filter data for this range
+#     mask = (df['date'].dt.date >= start_date) & (df['date'].dt.date <= end_date)
+#     weekly_df = df.loc[mask].copy()
+
+#     # 3. Group by date and count unique employees
+#     daily_counts = weekly_df.groupby(weekly_df['date'].dt.date)['employee_name'].nunique()
+
+#     # 4. Format for Recharts
+#     trend_data = []
+#     for i in range(7):
+#         current_day = start_date + timedelta(days=i)
+#         day_name = current_day.strftime("%a")
+#         count = daily_counts.get(current_day, 0)
+        
+#         trend_data.append({
+#             "name": day_name,
+#             "present": int(count),
+#             "full_date": current_day.strftime("%Y-%m-%d")
+#         })
+        
+#     return trend_data
+
+# # ---------------------------------------------------
+# # 8. JIRA / TASK BOARD FEATURES
+# # ---------------------------------------------------
+
+# def get_tasks_with_subtasks():
+#     conn = get_connection()
+#     try:
+#         df = pd.read_sql("SELECT * FROM tasks ORDER BY id ASC", conn)
+#     except:
+#         conn.close()
+#         return []
+#     conn.close()
+
+#     if df.empty:
+#         return []
+
+#     if 'parent_id' not in df.columns:
+#         return []
+
+#     # JSON Fix: Replace NaN with None
+#     df = df.where(pd.notnull(df), None)
+    
+#     tasks = df.to_dict(orient="records")
+    
+#     parents = [t for t in tasks if not t['parent_id']]
+#     subtasks = [t for t in tasks if t['parent_id']]
+
+#     parents.reverse() 
+
+#     for p in parents:
+#         children = [s for s in subtasks if s['parent_id'] == p['id']]
+#         p['subtasks'] = children
+        
+#         if children:
+#             done_count = sum(1 for c in children if c['status'] == 'Done')
+#             p['progress'] = int((done_count / len(children)) * 100) if len(children) > 0 else 0
+#         else:
+#             p['progress'] = 100 if p['status'] == 'Done' else 0
+
+#     return parents
+
+# def get_free_time_employees(df):
+#     conn = get_connection()
+    
+#     try:
+#         users = pd.read_sql("SELECT name as employee_name FROM users WHERE role = 'Employee'", conn)
+#     except:
+#         users = pd.DataFrame(columns=["employee_name"])
+    
+#     try:
+#         tasks = pd.read_sql("SELECT employee_name, allocated_hours FROM tasks WHERE date = ? AND status != 'Rejected'", 
+#                             conn, params=(datetime.now().strftime("%Y-%m-%d"),))
+#     except:
+#         tasks = pd.DataFrame(columns=["employee_name", "allocated_hours"])
+    
+#     conn.close()
+
+#     if users.empty:
+#         return []
+
+#     if not tasks.empty:
+#         task_sum = tasks.groupby("employee_name")["allocated_hours"].sum().reset_index()
+#         merged = pd.merge(users, task_sum, on="employee_name", how="left")
+#     else:
+#         merged = users.copy()
+#         merged["allocated_hours"] = 0
+
+#     merged["allocated_hours"] = merged["allocated_hours"].fillna(0.0)
+#     merged["free_hours"] = FULL_DAY_HOURS - merged["allocated_hours"] 
+
+#     result = merged[merged["free_hours"] >= 0.5][["employee_name", "free_hours"]]
+    
+#     return result.where(pd.notnull(result), None).to_dict(orient="records")
+
+# def get_task_details(task_id):
+#     """Fetches a single task and its subtasks for the Lightbox."""
+#     conn = get_connection()
+#     cursor = conn.cursor()
+    
+#     cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+#     parent = cursor.fetchone()
+    
+#     if not parent:
+#         conn.close()
+#         return None
+    
+#     cursor.execute("SELECT * FROM tasks WHERE parent_id = ? ORDER BY id ASC", (task_id,))
+#     children = cursor.fetchall()
+#     conn.close()
+    
+#     result = dict(parent)
+#     result['subtasks'] = [dict(c) for c in children]
+    
+#     # Calculate progress
+#     if result['subtasks']:
+#         done = sum(1 for c in result['subtasks'] if c['status'] == 'Done')
+#         result['progress'] = int((done / len(result['subtasks'])) * 100)
+#     else:
+#         result['progress'] = 100 if result['status'] == 'Done' else 0
+
+#     return result
+
+# def add_subtask(parent_id, task_name, hours):
+#     conn = get_connection()
+#     cursor = conn.cursor()
+    
+#     cursor.execute("SELECT employee_name FROM tasks WHERE id = ?", (parent_id,))
+#     parent = cursor.fetchone()
+    
+#     if parent:
+#         cursor.execute('''
+#             INSERT INTO tasks (employee_name, date, task_name, allocated_hours, status, parent_id) 
+#             VALUES (?, DATE('now'), ?, ?, 'To Do', ?)
+#         ''', (parent['employee_name'], task_name, hours, parent_id))
+#         conn.commit()
+#     conn.close()
+
+
 import pandas as pd
 import hashlib
 import calendar 
@@ -101,7 +503,7 @@ def add_employee_attendance(name, date, login, logout):
     finally: conn.close()
 
 # ---------------------------------------------------
-# 4. REAL-TIME
+# 4. REAL-TIME STATUS
 # ---------------------------------------------------
 def get_employee_current_status(employee_name):
     conn = get_connection()
@@ -132,30 +534,123 @@ def mark_punch_out(employee_name):
     except: return False
     finally: conn.close()
 
-# ---------------------------------------------------
-# 5. TASKS (CORE)
-# ---------------------------------------------------
-def get_my_tasks(employee_name):
+# ===================================================
+# 5. JIRA-STYLE RECURSIVE TASK MANAGEMENT
+#    (Fully Hierarchical & Process Oriented)
+# ===================================================
+
+def build_task_tree(tasks, parent_id=None):
+    """
+    Recursive function to convert flat list of tasks into a nested tree.
+    Supports infinite depth sub-tasks.
+    """
+    tree = []
+    # Find direct children of the current parent_id
+    # We check if t['parent_id'] matches the requested parent_id
+    # Handles None vs NaN issues by explicit check
+    children = [t for t in tasks if t['parent_id'] == parent_id]
+    
+    for child in children:
+        # RECURSION: Find children of this child
+        child['subtasks'] = build_task_tree(tasks, child['id'])
+        
+        # Recursive Progress Calculation
+        if child['subtasks']:
+            # If it has children, progress is the average of children's progress
+            total_progress = 0
+            for c in child['subtasks']:
+                if 'progress' in c:
+                    total_progress += c['progress']
+                else:
+                    total_progress += 100 if c['status'] == 'Done' else 0
+            
+            child['progress'] = int(total_progress / len(child['subtasks']))
+        else:
+            # Leaf node: 100% if Done, 0% otherwise
+            child['progress'] = 100 if child['status'] == 'Done' else 0
+            
+        tree.append(child)
+        
+    return tree
+
+def get_tasks_with_subtasks():
+    """Returns the full hierarchy starting from root tasks (parent_id=None)."""
     conn = get_connection()
     try:
-        return pd.read_sql("SELECT id, task_name, allocated_hours, status FROM tasks WHERE employee_name = ? AND date = ?", 
-                           conn, params=(employee_name, datetime.now().strftime("%Y-%m-%d")))
+        df = pd.read_sql("SELECT * FROM tasks ORDER BY id ASC", conn)
+    except:
+        conn.close(); return []
+    conn.close()
+
+    if df.empty: return []
+    if 'parent_id' not in df.columns: return []
+
+    # Clean Data (Replace NaN with None)
+    df = df.where(pd.notnull(df), None)
+    all_tasks = df.to_dict(orient="records")
+    
+    # Build tree starting from roots (where parent_id is None)
+    tree = build_task_tree(all_tasks, None)
+    
+    # Reverse mainly for the board view so newest are first
+    tree.reverse()
+    return tree
+
+def get_task_details(task_id):
+    """Fetches a specific task and builds its subtree recursively."""
+    conn = get_connection()
+    try:
+        # We fetch ALL tasks to ensure we can build the full deep tree
+        df = pd.read_sql("SELECT * FROM tasks", conn)
+    except:
+        conn.close(); return None
+    conn.close()
+    
+    df = df.where(pd.notnull(df), None)
+    all_tasks = df.to_dict(orient="records")
+    
+    # Find the requested root node
+    root = next((t for t in all_tasks if t['id'] == task_id), None)
+    if not root: return None
+    
+    # Build the tree starting from this node
+    root['subtasks'] = build_task_tree(all_tasks, task_id)
+    
+    # Calculate root progress manually since it wasn't returned by build_tree
+    if root['subtasks']:
+        total = sum(c.get('progress', 0) for c in root['subtasks'])
+        root['progress'] = int(total / len(root['subtasks']))
+    else:
+        root['progress'] = 100 if root['status'] == 'Done' else 0
+        
+    return root
+
+def get_my_tasks(employee_name):
+    """Returns only ROOT (Parent) tasks for the dashboard view."""
+    conn = get_connection()
+    try:
+        # We filter by parent_id IS NULL to avoid showing sub-tasks as main cards
+        return pd.read_sql("""
+            SELECT id, task_name, allocated_hours, status 
+            FROM tasks 
+            WHERE employee_name = ? 
+            AND date = ? 
+            AND parent_id IS NULL
+        """, conn, params=(employee_name, datetime.now().strftime("%Y-%m-%d")))
     except: return pd.DataFrame()
     finally: conn.close()
 
 def get_all_tasks_history():
+    """Returns history of ROOT tasks only."""
     conn = get_connection()
     try: 
-        return pd.read_sql("SELECT id, date, employee_name, task_name, allocated_hours, status FROM tasks ORDER BY id DESC", conn)
+        return pd.read_sql("""
+            SELECT id, date, employee_name, task_name, allocated_hours, status 
+            FROM tasks 
+            WHERE parent_id IS NULL 
+            ORDER BY id DESC
+        """, conn)
     except: return pd.DataFrame()
-    finally: conn.close()
-
-def update_task_status(task_id, new_status):
-    conn = get_connection(); cursor = conn.cursor()
-    try:
-        cursor.execute("UPDATE tasks SET status = ? WHERE id = ?", (new_status, task_id))
-        conn.commit(); return True
-    except: return False
     finally: conn.close()
 
 def allocate_task(employee_name, task_name, hours):
@@ -165,6 +660,29 @@ def allocate_task(employee_name, task_name, hours):
                        (employee_name, task_name, hours))
         conn.commit()
     except: pass
+    finally: conn.close()
+
+def add_subtask(parent_id, task_name, hours):
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT employee_name FROM tasks WHERE id = ?", (parent_id,))
+    parent = cursor.fetchone()
+    
+    if parent:
+        cursor.execute('''
+            INSERT INTO tasks (employee_name, date, task_name, allocated_hours, status, parent_id) 
+            VALUES (?, DATE('now'), ?, ?, 'To Do', ?)
+        ''', (parent['employee_name'], task_name, hours, parent_id))
+        conn.commit()
+    conn.close()
+
+def update_task_status(task_id, new_status):
+    conn = get_connection(); cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE tasks SET status = ? WHERE id = ?", (new_status, task_id))
+        conn.commit(); return True
+    except: return False
     finally: conn.close()
 
 def delete_task(task_id):
@@ -185,6 +703,40 @@ def edit_task(task_id, new_task_name, new_hours):
         conn.commit(); return True
     except: return False
     finally: conn.close()
+
+def get_free_time_employees(df):
+    conn = get_connection()
+    
+    try:
+        users = pd.read_sql("SELECT name as employee_name FROM users WHERE role = 'Employee'", conn)
+    except:
+        users = pd.DataFrame(columns=["employee_name"])
+    
+    try:
+        tasks = pd.read_sql("SELECT employee_name, allocated_hours FROM tasks WHERE date = ? AND status != 'Rejected'", 
+                            conn, params=(datetime.now().strftime("%Y-%m-%d"),))
+    except:
+        tasks = pd.DataFrame(columns=["employee_name", "allocated_hours"])
+    
+    conn.close()
+
+    if users.empty:
+        return []
+
+    if not tasks.empty:
+        task_sum = tasks.groupby("employee_name")["allocated_hours"].sum().reset_index()
+        merged = pd.merge(users, task_sum, on="employee_name", how="left")
+    else:
+        merged = users.copy()
+        merged["allocated_hours"] = 0
+
+    merged["allocated_hours"] = merged["allocated_hours"].fillna(0.0)
+    merged["free_hours"] = FULL_DAY_HOURS - merged["allocated_hours"] 
+
+    result = merged[merged["free_hours"] >= 0.5][["employee_name", "free_hours"]]
+    
+    # Returns List[Dict] to avoid JSON NaN errors
+    return result.where(pd.notnull(result), None).to_dict(orient="records")
 
 # ---------------------------------------------------
 # 6. REPORTING & UTILS
@@ -281,120 +833,3 @@ def get_weekly_trend(df):
         })
         
     return trend_data
-
-# ---------------------------------------------------
-# 8. JIRA / TASK BOARD FEATURES
-# ---------------------------------------------------
-
-def get_tasks_with_subtasks():
-    conn = get_connection()
-    try:
-        df = pd.read_sql("SELECT * FROM tasks ORDER BY id ASC", conn)
-    except:
-        conn.close()
-        return []
-    conn.close()
-
-    if df.empty:
-        return []
-
-    if 'parent_id' not in df.columns:
-        return []
-
-    # JSON Fix: Replace NaN with None
-    df = df.where(pd.notnull(df), None)
-    
-    tasks = df.to_dict(orient="records")
-    
-    parents = [t for t in tasks if not t['parent_id']]
-    subtasks = [t for t in tasks if t['parent_id']]
-
-    parents.reverse() 
-
-    for p in parents:
-        children = [s for s in subtasks if s['parent_id'] == p['id']]
-        p['subtasks'] = children
-        
-        if children:
-            done_count = sum(1 for c in children if c['status'] == 'Done')
-            p['progress'] = int((done_count / len(children)) * 100) if len(children) > 0 else 0
-        else:
-            p['progress'] = 100 if p['status'] == 'Done' else 0
-
-    return parents
-
-def get_free_time_employees(df):
-    conn = get_connection()
-    
-    try:
-        users = pd.read_sql("SELECT name as employee_name FROM users WHERE role = 'Employee'", conn)
-    except:
-        users = pd.DataFrame(columns=["employee_name"])
-    
-    try:
-        tasks = pd.read_sql("SELECT employee_name, allocated_hours FROM tasks WHERE date = ? AND status != 'Rejected'", 
-                            conn, params=(datetime.now().strftime("%Y-%m-%d"),))
-    except:
-        tasks = pd.DataFrame(columns=["employee_name", "allocated_hours"])
-    
-    conn.close()
-
-    if users.empty:
-        return []
-
-    if not tasks.empty:
-        task_sum = tasks.groupby("employee_name")["allocated_hours"].sum().reset_index()
-        merged = pd.merge(users, task_sum, on="employee_name", how="left")
-    else:
-        merged = users.copy()
-        merged["allocated_hours"] = 0
-
-    merged["allocated_hours"] = merged["allocated_hours"].fillna(0.0)
-    merged["free_hours"] = FULL_DAY_HOURS - merged["allocated_hours"] 
-
-    result = merged[merged["free_hours"] >= 0.5][["employee_name", "free_hours"]]
-    
-    return result.where(pd.notnull(result), None).to_dict(orient="records")
-
-def get_task_details(task_id):
-    """Fetches a single task and its subtasks for the Lightbox."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
-    parent = cursor.fetchone()
-    
-    if not parent:
-        conn.close()
-        return None
-    
-    cursor.execute("SELECT * FROM tasks WHERE parent_id = ? ORDER BY id ASC", (task_id,))
-    children = cursor.fetchall()
-    conn.close()
-    
-    result = dict(parent)
-    result['subtasks'] = [dict(c) for c in children]
-    
-    # Calculate progress
-    if result['subtasks']:
-        done = sum(1 for c in result['subtasks'] if c['status'] == 'Done')
-        result['progress'] = int((done / len(result['subtasks'])) * 100)
-    else:
-        result['progress'] = 100 if result['status'] == 'Done' else 0
-
-    return result
-
-def add_subtask(parent_id, task_name, hours):
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT employee_name FROM tasks WHERE id = ?", (parent_id,))
-    parent = cursor.fetchone()
-    
-    if parent:
-        cursor.execute('''
-            INSERT INTO tasks (employee_name, date, task_name, allocated_hours, status, parent_id) 
-            VALUES (?, DATE('now'), ?, ?, 'To Do', ?)
-        ''', (parent['employee_name'], task_name, hours, parent_id))
-        conn.commit()
-    conn.close()
