@@ -501,13 +501,14 @@
 
 
 "use client";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { 
   Briefcase, Plus, CheckCircle2, Circle, Clock, 
   User, X, Loader2, Layout, Trash2, Lock, AlertTriangle, AlertCircle,
   Search, Filter, Trophy, Tag, ChevronRight, ChevronDown, 
-  Bug, BookOpen, CheckSquare, Flame, ArrowUp, ArrowDown, Minus, MoreHorizontal
+  Bug, BookOpen, CheckSquare, Flame, ArrowUp, ArrowDown, Minus, 
+  MoreHorizontal, Calendar, List, Kanban
 } from "lucide-react";
 
 // --- TYPES ---
@@ -527,6 +528,7 @@ interface Task {
   comments?: any[];
   history?: any[];
   time_spent?: number;
+  due_date?: string;
 }
 
 interface Staff {
@@ -536,10 +538,11 @@ interface Staff {
 // --- ICONS HELPERS ---
 const TypeIcon = ({ type }: { type: string }) => {
   switch (type) {
-    case 'Bug': return <div className="bg-red-900/30 p-1 rounded"><Bug size={14} className="text-red-400" /></div>;
-    case 'Story': return <div className="bg-green-900/30 p-1 rounded"><BookOpen size={14} className="text-green-400" /></div>;
-    case 'Epic': return <div className="bg-purple-900/30 p-1 rounded"><Flame size={14} className="text-purple-400" /></div>;
-    default: return <div className="bg-blue-900/30 p-1 rounded"><CheckSquare size={14} className="text-blue-400" /></div>;
+    case 'Bug': return <div className="bg-red-500/20 p-1 rounded-sm"><Bug size={12} className="text-red-500" /></div>;
+    case 'Story': return <div className="bg-green-500/20 p-1 rounded-sm"><BookOpen size={12} className="text-green-500" /></div>;
+    case 'Epic': return <div className="bg-purple-500/20 p-1 rounded-sm"><Flame size={12} className="text-purple-500" /></div>;
+    case 'Sub-task': return <div className="bg-blue-300/20 p-1 rounded-sm"><CheckSquare size={12} className="text-blue-300" /></div>;
+    default: return <div className="bg-blue-500/20 p-1 rounded-sm"><CheckSquare size={12} className="text-blue-500" /></div>;
   }
 };
 
@@ -560,15 +563,17 @@ export default function TasksPage() {
   const [role, setRole] = useState<string | null>(null);
   const [username, setUsername] = useState<string>("");
 
-  // Filters
+  // Filters & View
   const [searchQuery, setSearchQuery] = useState("");
   const [filterAssignee, setFilterAssignee] = useState("");
-
+  
   // UI State
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [expandedTasks, setExpandedTasks] = useState<Record<number, boolean>>({});
-  
+  const [quickAddParentId, setQuickAddParentId] = useState<number | null>(null); // For inline subtask creation
+  const [quickAddValue, setQuickAddValue] = useState("");
+
   const [newTask, setNewTask] = useState({ 
       employee_name: "", task_name: "", description: "", allocated_hours: 2.0,
       priority: "Medium", task_type: "Task", story_points: 0
@@ -612,10 +617,16 @@ export default function TasksPage() {
       setTasks(allTasks);
       setStaff(resStaff.data);
       
-      // Auto-expand all tasks initially for better visibility
+      // Auto-expand logic (expand all by default for visibility)
       const expandMap: Record<number, boolean> = {};
-      allTasks.forEach((t: Task) => { expandMap[t.id] = true; });
-      setExpandedTasks(prev => ({...expandMap, ...prev})); // Merge to keep user state
+      const recurseExpand = (list: Task[]) => {
+          list.forEach(t => {
+              expandMap[t.id] = true;
+              if(t.subtasks) recurseExpand(t.subtasks);
+          })
+      }
+      recurseExpand(allTasks);
+      setExpandedTasks(prev => Object.keys(prev).length === 0 ? expandMap : prev);
 
       if (selectedTask) {
         const freshDetail = await axios.get(`http://localhost:8000/api/tasks/${selectedTask.id}`);
@@ -628,8 +639,7 @@ export default function TasksPage() {
   // --- HELPERS ---
   const showConfirm = (title: string, message: string, onConfirm: () => void) => setModal({ type: 'CONFIRM', title, message, action: onConfirm });
   const showAlert = (title: string, message: string) => setModal({ type: 'ALERT', title, message });
-  const showInput = (title: string, message: string, onSubmit: (val: string) => void) => setModal({ type: 'INPUT', title, message, action: (val) => onSubmit(val || "") });
-
+  
   const toggleExpand = (id: number) => {
     setExpandedTasks(prev => ({ ...prev, [id]: !prev[id] }));
   };
@@ -644,18 +654,18 @@ export default function TasksPage() {
     try {
         await axios.post("http://localhost:8000/api/tasks", { ...newTask, reporter: username });
         setNewTask({ employee_name: "", task_name: "", description: "", allocated_hours: 2.0, priority: "Medium", task_type: "Task", story_points: 0 });
-        setIsCreateOpen(false);
+        setIsCreateModalOpen(false);
         fetchData();
     } catch(e) { showAlert("Error", "Failed to create task."); }
   };
 
-  const handleDeleteTask = async (e: React.MouseEvent, id: number, status: string) => {
+  const handleDeleteTask = async (e: React.MouseEvent, id: number) => {
     e.stopPropagation();
     if (role !== 'Admin') {
-        showAlert("Access Denied", "Only Administrators can delete projects.");
+        showAlert("Access Denied", "Only Administrators can delete items.");
         return;
     }
-    showConfirm("Delete Task?", "This will permanently delete this task and all its history.", async () => {
+    showConfirm("Delete Item?", "This will delete the item and all its sub-items permanently.", async () => {
         await axios.delete(`http://localhost:8000/api/tasks/${id}?user=${username}`);
         fetchData();
         setModal({ type: 'NONE' });
@@ -671,18 +681,16 @@ export default function TasksPage() {
     fetchData(); 
   };
 
-  const handleAddSubtask = (parentId: number) => {
-      showInput("Create Subtask", "What needs to be done?", async (val) => {
-          if(!val.trim()) return;
-          try {
-            await axios.post("http://localhost:8000/api/tasks/subtask", {
-                parent_id: parentId, task_name: val, allocated_hours: 1.0 
-            });
-            fetchData();
-            setModal({ type: 'NONE' });
-            setExpandedTasks(prev => ({ ...prev, [parentId]: true })); // Auto open parent
-          } catch (e) { showAlert("Error", "Failed to add subtask"); }
-      });
+  const handleQuickAddSubtask = async (parentId: number) => {
+      if(!quickAddValue.trim()) return;
+      try {
+        await axios.post("http://localhost:8000/api/tasks/subtask", {
+            parent_id: parentId, task_name: quickAddValue, allocated_hours: 1.0 
+        });
+        setQuickAddValue("");
+        setQuickAddParentId(null);
+        fetchData();
+      } catch (e) { showAlert("Error", "Failed to add subtask"); }
   };
 
   // --- FILTER LOGIC ---
@@ -698,53 +706,58 @@ export default function TasksPage() {
       const isExpanded = expandedTasks[task.id];
       const hasChildren = task.subtasks && task.subtasks.length > 0;
       const isDone = task.status === 'Done';
-
+      
       return (
           <>
             <div 
-                className={`group flex items-center py-2 px-4 hover:bg-slate-900 border-b border-slate-800/50 transition-colors text-sm ${isDone ? 'opacity-60' : ''}`}
+                className={`group flex items-center min-h-[48px] hover:bg-slate-900 border-b border-slate-800/50 transition-colors text-sm ${isDone ? 'bg-slate-950/30' : ''}`}
                 onClick={() => setSelectedTask(task)}
             >
                 {/* 1. Type */}
-                <div className="w-[50px] flex-shrink-0 flex justify-center">
+                <div className="w-[50px] flex-shrink-0 flex justify-center py-3">
                     <TypeIcon type={task.task_type} />
                 </div>
 
                 {/* 2. Key */}
-                <div className="w-[100px] flex-shrink-0 font-mono text-xs text-slate-500">
+                <div className="w-[90px] flex-shrink-0 font-mono text-xs text-slate-500 py-3">
                     {task.task_key || `#${task.id}`}
                 </div>
 
-                {/* 3. Summary (Indented) */}
-                <div className="flex-1 flex items-center gap-2 min-w-0 pr-4">
-                    <div style={{ width: depth * 24 }} /> {/* Indentation */}
+                {/* 3. Summary (Tree Structure) */}
+                <div className="flex-1 flex items-center gap-2 min-w-0 pr-4 py-3 relative">
+                    <div style={{ width: depth * 24 }} className="flex-shrink-0 relative h-full">
+                        {depth > 0 && <div className="absolute left-[-12px] top-[-24px] bottom-[24px] w-[1px] bg-slate-800"></div>}
+                        {depth > 0 && <div className="absolute left-[-12px] top-[50%] w-[12px] h-[1px] bg-slate-800"></div>}
+                    </div>
                     
                     {/* Expand Toggle */}
-                    <div className="w-5 flex justify-center flex-shrink-0">
-                        {hasChildren && (
+                    <div className="w-5 flex justify-center flex-shrink-0 z-10">
+                        {hasChildren ? (
                             <button 
                                 onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
-                                className="text-slate-500 hover:text-white p-0.5 rounded hover:bg-slate-800"
+                                className="text-slate-500 hover:text-white p-0.5 rounded hover:bg-slate-800 transition"
                             >
                                 {isExpanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
                             </button>
+                        ) : (
+                            <div className="w-1.5 h-1.5 rounded-full bg-slate-800"></div>
                         )}
                     </div>
 
-                    <span className={`truncate font-medium ${isDone ? 'text-slate-500 line-through' : 'text-slate-200'}`}>
+                    <span className={`truncate font-medium cursor-pointer hover:text-blue-400 hover:underline ${isDone ? 'text-slate-500 line-through' : 'text-slate-200'}`}>
                         {task.task_name}
                     </span>
                 </div>
 
                 {/* 4. Status */}
-                <div className="w-[140px] flex-shrink-0">
+                <div className="w-[130px] flex-shrink-0 py-3">
                     <button 
                         onClick={(e) => { e.stopPropagation(); handleStatusUpdate(task.id, task.status); }}
                         disabled={role !== 'Admin' && isDone}
-                        className={`px-3 py-1 rounded text-[10px] font-bold border uppercase tracking-wider transition-all
-                            ${task.status === 'Done' ? 'bg-emerald-950/40 text-emerald-500 border-emerald-900 hover:bg-emerald-900/60' : 
-                              task.status === 'In Progress' ? 'bg-blue-900/30 text-blue-400 border-blue-900 hover:bg-blue-900/50' : 
-                              'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'}
+                        className={`px-2 py-0.5 rounded-[3px] text-[10px] font-bold uppercase tracking-wider transition-all
+                            ${task.status === 'Done' ? 'bg-green-900/30 text-green-400 hover:bg-green-900/50' : 
+                              task.status === 'In Progress' ? 'bg-blue-900/30 text-blue-400 hover:bg-blue-900/50' : 
+                              'bg-slate-800 text-slate-400 hover:bg-slate-700'}
                         `}
                     >
                         {task.status}
@@ -752,7 +765,7 @@ export default function TasksPage() {
                 </div>
 
                 {/* 5. Assignee */}
-                <div className="w-[180px] flex-shrink-0 flex items-center gap-2">
+                <div className="w-[160px] flex-shrink-0 flex items-center gap-2 py-3">
                     <div className="h-6 w-6 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-[10px] font-bold text-blue-400">
                         {task.employee_name.charAt(0)}
                     </div>
@@ -760,28 +773,28 @@ export default function TasksPage() {
                 </div>
 
                 {/* 6. Priority */}
-                <div className="w-[100px] flex-shrink-0 flex items-center gap-2">
+                <div className="w-[90px] flex-shrink-0 flex items-center gap-2 py-3">
                     <PriorityIcon priority={task.priority} />
                     <span className="text-xs text-slate-400">{task.priority}</span>
                 </div>
 
                 {/* 7. Actions */}
-                <div className="w-[80px] flex-shrink-0 flex justify-end opacity-0 group-hover:opacity-100 transition-opacity gap-1">
-                    {/* Add Subtask Button */}
+                <div className="w-[80px] flex-shrink-0 flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity pr-2 py-3">
+                    {/* Add Subtask Trigger */}
                     {(role === 'Admin' || (task.employee_name === username && !isDone)) && (
                         <button 
-                            onClick={(e) => { e.stopPropagation(); handleAddSubtask(task.id); }}
+                            onClick={(e) => { e.stopPropagation(); setQuickAddParentId(task.id); setExpandedTasks(prev => ({...prev, [task.id]: true})); }}
                             className="p-1.5 text-slate-500 hover:text-blue-400 hover:bg-slate-800 rounded"
-                            title="Add Subtask"
+                            title="Create subtask"
                         >
                             <Plus size={14}/>
                         </button>
                     )}
                     
-                    {/* Delete Button */}
+                    {/* Delete */}
                     {role === 'Admin' && (
                         <button 
-                            onClick={(e) => handleDeleteTask(e, task.id, task.status)} 
+                            onClick={(e) => handleDeleteTask(e, task.id)} 
                             className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-slate-800 rounded"
                             title="Delete"
                         >
@@ -791,6 +804,29 @@ export default function TasksPage() {
                 </div>
             </div>
 
+            {/* Inline Subtask Creator */}
+            {quickAddParentId === task.id && (
+                <div className="flex items-center min-h-[48px] bg-slate-900/50 border-b border-slate-800 animate-in fade-in slide-in-from-top-1">
+                    <div className="w-[50px]"></div>
+                    <div className="w-[90px]"></div>
+                    <div className="flex-1 flex items-center gap-2 pl-4">
+                        <div style={{ width: (depth + 1) * 24 }} />
+                        <div className="flex items-center gap-2 w-full max-w-md">
+                            <input 
+                                autoFocus
+                                className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white outline-none w-full focus:border-blue-500"
+                                placeholder="What needs to be done?"
+                                value={quickAddValue}
+                                onChange={e => setQuickAddValue(e.target.value)}
+                                onKeyDown={e => e.key === 'Enter' && handleQuickAddSubtask(task.id)}
+                            />
+                            <button onClick={() => handleQuickAddSubtask(task.id)} className="text-xs bg-blue-600 px-2 py-1 rounded text-white hover:bg-blue-500">Save</button>
+                            <button onClick={() => setQuickAddParentId(null)} className="p-1 text-slate-500 hover:text-white"><X size={12}/></button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Recursive Render */}
             {isExpanded && task.subtasks && task.subtasks.map(sub => (
                 <TaskRow key={sub.id} task={sub} depth={depth + 1} />
@@ -799,7 +835,7 @@ export default function TasksPage() {
       );
   };
 
-  // --- MODAL COMPONENTS ---
+  // --- MODAL COMPONENT ---
   const GlobalModal = () => {
       const [localInput, setLocalInput] = useState("");
       if (modal.type === 'NONE') return null;
@@ -807,22 +843,22 @@ export default function TasksPage() {
 
       return (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-              <div className="bg-slate-900 border border-slate-800 w-full max-w-sm rounded-2xl shadow-2xl p-6 flex flex-col gap-4">
+              <div className="bg-slate-900 border border-slate-800 w-full max-w-sm rounded-2xl shadow-2xl p-6 flex flex-col gap-4 animate-in zoom-in-95 duration-200">
                   <div className="flex items-center gap-3">
                       <div className={`p-3 rounded-full ${modal.type === 'ALERT' ? 'bg-red-500/10 text-red-500' : 'bg-blue-500/10 text-blue-500'}`}>
                           {modal.type === 'ALERT' ? <AlertTriangle size={24} /> : modal.type === 'INPUT' ? <Plus size={24} /> : <AlertCircle size={24} />}
                       </div>
                       <h3 className="text-lg font-bold text-white">{modal.title}</h3>
                   </div>
-                  <p className="text-slate-400 text-sm">{modal.message}</p>
+                  <p className="text-slate-400 text-sm leading-relaxed">{modal.message}</p>
                   {modal.type === 'INPUT' && (
                       <input className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-white focus:ring-2 focus:ring-blue-500 outline-none"
                           placeholder="Type here..." autoFocus value={localInput} onChange={(e) => setLocalInput(e.target.value)}
                           onKeyDown={(e) => e.key === 'Enter' && handleSubmit()} />
                   )}
                   <div className="flex gap-3 justify-end mt-2">
-                      <button onClick={() => setModal({ type: 'NONE' })} className="px-4 py-2 text-sm text-slate-400 hover:text-white">Cancel</button>
-                      {modal.type !== 'ALERT' && <button onClick={handleSubmit} className="px-4 py-2 rounded-lg text-sm font-bold text-white bg-blue-600 hover:bg-blue-500">Confirm</button>}
+                      <button onClick={() => setModal({ type: 'NONE' })} className="px-4 py-2 rounded-lg text-sm font-bold text-slate-400 hover:text-white hover:bg-slate-800 transition">{modal.type === 'ALERT' ? 'Close' : 'Cancel'}</button>
+                      {modal.type !== 'ALERT' && <button onClick={handleSubmit} className="px-4 py-2 rounded-lg text-sm font-bold text-white bg-blue-600 hover:bg-blue-500 transition shadow-lg">Confirm</button>}
                   </div>
               </div>
           </div>
@@ -833,92 +869,96 @@ export default function TasksPage() {
     <div className="flex flex-col h-screen bg-slate-950 text-slate-200 overflow-hidden">
       <GlobalModal />
 
-      {/* HEADER / TOOLBAR */}
-      <div className="flex-shrink-0 p-6 border-b border-slate-800 flex flex-col gap-6 bg-slate-950 z-10">
-          <div className="flex justify-between items-center">
+      {/* 1. TOP NAVBAR (Jira Style) */}
+      <div className="flex-shrink-0 h-16 border-b border-slate-800 flex items-center px-6 bg-slate-950 z-20 justify-between">
+          <div className="flex items-center gap-4">
+              <div className="bg-blue-600 h-8 w-8 rounded flex items-center justify-center font-bold text-white shadow-lg">P</div>
               <div>
-                  <div className="flex items-center gap-2 text-slate-500 text-xs font-medium mb-1">
-                      <span>Projects</span>
-                      <span className="text-slate-700">/</span>
-                      <span className="text-slate-300">Software Development</span>
+                  <div className="text-xs text-slate-500 font-medium">Projects / Software</div>
+                  <div className="text-sm font-bold text-white flex items-center gap-2">
+                      Platform Development <ChevronDown size={14} className="text-slate-500"/>
                   </div>
-                  <h1 className="text-2xl font-bold text-white">List</h1>
               </div>
-              
+          </div>
+          
+          <div className="flex items-center gap-3">
               {role === 'Admin' && (
-                  <button onClick={() => setIsCreateOpen(true)} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-[3px] font-semibold text-sm flex items-center gap-2 transition">
+                  <button onClick={() => setIsCreateModalOpen(true)} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-[3px] font-semibold text-sm transition shadow-lg shadow-blue-900/20">
                       Create
                   </button>
               )}
           </div>
+      </div>
 
-          <div className="flex items-center gap-3">
-              <div className="relative flex-1 max-w-sm">
-                  <Search className="absolute left-2.5 top-2 text-slate-500" size={16}/>
+      {/* 2. SUB HEADER (Filters) */}
+      <div className="flex-shrink-0 px-6 py-4 flex items-center justify-between border-b border-slate-800 bg-slate-950/50">
+          <div className="flex items-center gap-4">
+              <div className="relative w-64">
+                  <Search className="absolute left-2.5 top-2 text-slate-500" size={14}/>
                   <input 
-                      className="w-full bg-slate-900 border border-slate-700 rounded-[3px] pl-9 p-1.5 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none placeholder-slate-500 transition hover:bg-slate-800"
-                      placeholder="Search tasks..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-[3px] pl-8 p-1.5 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none transition"
+                      placeholder="Search" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
                   />
               </div>
               
-              {/* Assignee Filter */}
-              <div className="flex items-center -space-x-2 mr-4">
+              {/* Avatar Pile */}
+              <div className="flex items-center -space-x-1">
                   {staff.slice(0, 4).map((s, i) => (
-                      <div key={i} className="h-8 w-8 rounded-full bg-slate-800 border-2 border-slate-950 flex items-center justify-center text-[10px] font-bold text-slate-400 cursor-pointer hover:z-10 hover:border-blue-500 transition" title={s.name} onClick={() => setFilterAssignee(filterAssignee === s.name ? "" : s.name)}>
+                      <div key={i} className="h-7 w-7 rounded-full bg-slate-800 border-2 border-slate-950 flex items-center justify-center text-[10px] font-bold text-slate-400 cursor-pointer hover:z-10 hover:border-blue-500 transition" title={s.name} onClick={() => setFilterAssignee(filterAssignee === s.name ? "" : s.name)}>
                           {s.name.charAt(0)}
                       </div>
                   ))}
-                  {staff.length > 4 && <div className="h-8 w-8 rounded-full bg-slate-800 border-2 border-slate-950 flex items-center justify-center text-[10px] text-slate-500">+{staff.length - 4}</div>}
+                  {staff.length > 4 && <div className="h-7 w-7 rounded-full bg-slate-800 border-2 border-slate-950 flex items-center justify-center text-[10px] text-slate-500">+{staff.length - 4}</div>}
               </div>
-              
-              <button className="text-slate-400 hover:text-white text-sm font-medium px-3 py-1.5 rounded hover:bg-slate-800 transition">Clear filters</button>
+              <button className="text-slate-400 hover:text-white text-xs font-medium" onClick={() => setFilterAssignee("")}>Clear filters</button>
+          </div>
+          <div className="flex items-center gap-2 text-slate-400">
+              <List size={18} className="text-blue-400" />
+              <Kanban size={18} className="hover:text-white cursor-pointer" />
+              <Calendar size={18} className="hover:text-white cursor-pointer" />
           </div>
       </div>
 
-      {/* TABLE HEADER */}
-      <div className="flex-shrink-0 bg-slate-950 border-b border-slate-800 px-4 py-2 flex items-center text-xs font-bold text-slate-500 uppercase tracking-wide">
-          <div className="w-[50px] pl-1">Type</div>
-          <div className="w-[100px]">Key</div>
+      {/* 3. TABLE HEADER */}
+      <div className="flex-shrink-0 bg-slate-950 border-b border-slate-800 px-4 py-2 flex items-center text-[11px] font-bold text-slate-500 uppercase tracking-wide sticky top-0 z-10">
+          <div className="w-[50px] text-center">Type</div>
+          <div className="w-[90px]">Key</div>
           <div className="flex-1">Summary</div>
-          <div className="w-[140px]">Status</div>
-          <div className="w-[180px]">Assignee</div>
-          <div className="w-[100px]">Priority</div>
+          <div className="w-[130px]">Status</div>
+          <div className="w-[160px]">Assignee</div>
+          <div className="w-[90px]">Priority</div>
           <div className="w-[80px] text-right">Actions</div>
       </div>
 
-      {/* TABLE BODY (Scrollable) */}
+      {/* 4. TABLE BODY */}
       <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-950 pb-20">
           {loading ? (
               <div className="flex justify-center items-center h-64 text-slate-500 gap-2"><Loader2 className="animate-spin" /> Loading tasks...</div>
           ) : filteredTasks.length === 0 ? (
               <div className="text-center py-20 text-slate-500">No tasks found.</div>
           ) : (
-              filteredTasks.map(task => (
-                  <TaskRow key={task.id} task={task} />
-              ))
+              filteredTasks.map(task => <TaskRow key={task.id} task={task} />)
           )}
           
-          {/* Quick Add Row at Bottom */}
+          {/* Create Item Row (Bottom) */}
           {role === 'Admin' && (
               <div 
-                className="flex items-center px-4 py-3 text-sm text-slate-500 hover:bg-slate-900 cursor-pointer border-b border-transparent hover:border-slate-800 transition group"
-                onClick={() => setIsCreateOpen(true)}
+                className="flex items-center px-4 py-2.5 text-sm text-slate-500 hover:bg-slate-900 cursor-pointer border-b border-transparent hover:border-slate-800 transition group"
+                onClick={() => setIsCreateModalOpen(true)}
               >
-                  <div className="w-[50px] pl-1"><Plus size={16} /></div>
-                  <div className="font-medium group-hover:text-blue-400">Create new task</div>
+                  <div className="w-[50px] flex justify-center"><Plus size={16} /></div>
+                  <div className="font-medium group-hover:text-blue-400">Create item</div>
               </div>
           )}
       </div>
 
       {/* --- CREATE MODAL (ADMIN ONLY) --- */}
-      {isCreateOpen && role === 'Admin' && (
+      {isCreateModalOpen && role === 'Admin' && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
               <div className="bg-slate-900 border border-slate-800 w-full max-w-2xl rounded-lg shadow-2xl p-8 animate-in slide-in-from-bottom-4 duration-300">
                   <div className="flex justify-between items-center mb-6">
                       <h2 className="text-xl font-bold text-white">Create Issue</h2>
-                      <button onClick={() => setIsCreateOpen(false)}><X className="text-slate-500 hover:text-white" /></button>
+                      <button onClick={() => setIsCreateModalOpen(false)}><X className="text-slate-500 hover:text-white" /></button>
                   </div>
                   <div className="space-y-4">
                       <div>
@@ -929,7 +969,7 @@ export default function TasksPage() {
                       <div className="grid grid-cols-2 gap-4">
                           <div>
                               <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Type</label>
-                              <select className="w-full bg-slate-950 border border-slate-700 rounded-[3px] p-2 text-white focus:border-blue-500 outline-none" value={newTask.task_type} onChange={e => setNewTask({...newTask, task_type: e.target.value})}>
+                              <select className="w-full bg-slate-950 border border-slate-700 rounded-[3px] p-2 text-white focus:border-blue-500 outline-none cursor-pointer" value={newTask.task_type} onChange={e => setNewTask({...newTask, task_type: e.target.value})}>
                                   <option value="Task">Task</option>
                                   <option value="Bug">Bug</option>
                                   <option value="Story">Story</option>
@@ -938,7 +978,7 @@ export default function TasksPage() {
                           </div>
                           <div>
                               <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Priority</label>
-                              <select className="w-full bg-slate-950 border border-slate-700 rounded-[3px] p-2 text-white focus:border-blue-500 outline-none" value={newTask.priority} onChange={e => setNewTask({...newTask, priority: e.target.value})}>
+                              <select className="w-full bg-slate-950 border border-slate-700 rounded-[3px] p-2 text-white focus:border-blue-500 outline-none cursor-pointer" value={newTask.priority} onChange={e => setNewTask({...newTask, priority: e.target.value})}>
                                   <option value="Medium">Medium</option>
                                   <option value="Highest">Highest</option>
                                   <option value="High">High</option>
@@ -949,7 +989,7 @@ export default function TasksPage() {
 
                       <div>
                           <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Assignee</label>
-                          <select className="w-full bg-slate-950 border border-slate-700 rounded-[3px] p-2 text-white focus:border-blue-500 outline-none" value={newTask.employee_name} onChange={e => setNewTask({...newTask, employee_name: e.target.value})}>
+                          <select className="w-full bg-slate-950 border border-slate-700 rounded-[3px] p-2 text-white focus:border-blue-500 outline-none cursor-pointer" value={newTask.employee_name} onChange={e => setNewTask({...newTask, employee_name: e.target.value})}>
                               <option value="">Unassigned</option>
                               {staff.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
                           </select>
@@ -961,7 +1001,7 @@ export default function TasksPage() {
                       </div>
                   </div>
                   <div className="flex justify-end gap-3 mt-8">
-                      <button onClick={() => setIsCreateOpen(false)} className="px-4 py-2 text-sm font-medium text-slate-400 hover:text-white transition">Cancel</button>
+                      <button onClick={() => setIsCreateModalOpen(false)} className="px-4 py-2 text-sm font-medium text-slate-400 hover:text-white transition">Cancel</button>
                       <button onClick={handleCreateTask} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-[3px] text-sm font-bold transition shadow-lg">Create</button>
                   </div>
               </div>
@@ -972,7 +1012,6 @@ export default function TasksPage() {
       {selectedTask && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setSelectedTask(null)}>
           <div className="bg-slate-900 w-full max-w-5xl h-[85vh] rounded-lg shadow-2xl border border-slate-800 flex overflow-hidden" onClick={e => e.stopPropagation()}>
-            {/* ... (Previous Lightbox Logic, just styling tweaks for consistency) ... */}
             <div className="w-[70%] flex flex-col border-r border-slate-800">
                 <div className="px-8 py-6 border-b border-slate-800 flex justify-between items-start">
                     <div>
@@ -987,32 +1026,25 @@ export default function TasksPage() {
                 <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
                     <div className="mb-8">
                         <h4 className="text-sm font-bold text-slate-300 mb-2">Description</h4>
-                        <div className="text-slate-400 text-sm leading-relaxed">{selectedTask.description || "No description."}</div>
+                        <div className="text-slate-400 text-sm leading-relaxed whitespace-pre-wrap">{selectedTask.description || "No description."}</div>
                     </div>
                     
-                    {/* Subtasks Section in Lightbox */}
                     <div className="mb-8">
-                        <div className="flex items-center justify-between mb-4">
-                            <h4 className="text-sm font-bold text-slate-300">Subtasks</h4>
-                            <div className="flex items-center gap-2 text-xs text-slate-500">
-                                <div className="w-20 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                                    <div className="h-full bg-blue-500" style={{width: `${selectedTask.progress}%`}}></div>
-                                </div>
-                                {selectedTask.progress}%
-                            </div>
-                        </div>
+                        <h4 className="text-sm font-bold text-slate-300 mb-4">Subtasks</h4>
                         {selectedTask.subtasks?.map(sub => (
-                            <div key={sub.id} className="flex items-center justify-between py-2 border-b border-slate-800/50 text-sm">
+                            <div key={sub.id} className="flex items-center justify-between py-2 border-b border-slate-800/50 text-sm group">
                                 <div className="flex items-center gap-3">
                                     <TypeIcon type={sub.task_type} />
                                     <span className={sub.status === 'Done' ? 'line-through text-slate-600' : 'text-slate-300'}>{sub.task_name}</span>
                                 </div>
-                                <span className={`text-[10px] px-2 py-0.5 rounded font-bold border ${sub.status === 'Done' ? 'border-emerald-900 text-emerald-500' : 'border-slate-700 text-slate-400'}`}>{sub.status}</span>
+                                <div className="flex items-center gap-3">
+                                    <span className={`text-[10px] px-2 py-0.5 rounded font-bold border ${sub.status === 'Done' ? 'border-emerald-900 text-emerald-500' : 'border-slate-700 text-slate-400'}`}>{sub.status}</span>
+                                    {role === 'Admin' && <button onClick={(e) => handleDeleteTask(e, sub.id)} className="opacity-0 group-hover:opacity-100 text-slate-600 hover:text-red-400"><Trash2 size={12}/></button>}
+                                </div>
                             </div>
                         ))}
-                        
                         {(role === 'Admin' || (selectedTask.employee_name === username && selectedTask.status !== 'Done')) && (
-                            <button onClick={() => handleAddSubtask(selectedTask.id)} className="mt-3 text-xs font-bold text-blue-400 hover:text-blue-300 flex items-center gap-1">
+                            <button onClick={() => { setQuickAddParentId(selectedTask.id); setSelectedTask(null); }} className="mt-3 text-xs font-bold text-blue-400 hover:text-blue-300 flex items-center gap-1">
                                 <Plus size={14}/> Create subtask
                             </button>
                         )}
@@ -1023,12 +1055,8 @@ export default function TasksPage() {
             <div className="w-[30%] bg-slate-950/30 flex flex-col p-6 border-l border-slate-800 overflow-y-auto">
                 <div className="mb-6">
                     <label className="text-xs font-bold text-slate-500 uppercase mb-2 block">Status</label>
-                    <button 
-                        onClick={() => handleStatusUpdate(selectedTask.id, selectedTask.status)}
-                        className="w-full py-2 px-3 rounded-[3px] bg-slate-800 border border-slate-700 text-left text-sm font-medium text-white hover:bg-slate-700 transition flex justify-between items-center"
-                    >
-                        {selectedTask.status.toUpperCase()}
-                        <ChevronDown size={14} className="opacity-50"/>
+                    <button onClick={() => handleStatusUpdate(selectedTask.id, selectedTask.status)} className="w-full py-2 px-3 rounded-[3px] bg-slate-800 border border-slate-700 text-left text-sm font-medium text-white hover:bg-slate-700 transition flex justify-between items-center">
+                        {selectedTask.status.toUpperCase()} <ChevronDown size={14} className="opacity-50"/>
                     </button>
                 </div>
                 
@@ -1047,12 +1075,8 @@ export default function TasksPage() {
                             <span className="text-sm text-slate-300">{selectedTask.priority}</span>
                         </div>
                     </div>
-                    <div>
-                        <span className="text-xs text-slate-500 block mb-1">Story Points</span>
-                        <span className="bg-slate-800 px-2 py-0.5 rounded text-xs font-mono text-slate-300">{selectedTask.story_points}</span>
-                    </div>
                     <div className="border-t border-slate-800 pt-4">
-                        <span className="text-xs text-slate-500 block mb-1">Original Estimate</span>
+                        <span className="text-xs text-slate-500 block mb-1">Estimate</span>
                         <span className="text-sm text-slate-300">{selectedTask.allocated_hours}h</span>
                     </div>
                 </div>
